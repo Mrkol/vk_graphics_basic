@@ -1,0 +1,51 @@
+#version 430
+
+#define GROUP_SIZE 32
+
+layout( local_size_x = GROUP_SIZE ) in;
+
+layout( push_constant ) uniform params {
+  uint len;
+  uint depth;
+} PushConstant;
+
+layout(std430, binding = 0) buffer Data
+{
+    float data[];
+};
+
+layout(std430, binding = 1) buffer SumTrees
+{
+    float sumTrees[];
+};
+
+
+shared float temp[2*GROUP_SIZE];
+
+void main() 
+{
+    uint stride = PushConstant.depth == 0 ? 1 : 2*GROUP_SIZE;
+    
+    uint idx = gl_LocalInvocationID.x;
+    uint buffer_pos = gl_WorkGroupID.x * 2 * GROUP_SIZE + idx;
+
+    temp[idx] = data[stride - 1 + buffer_pos * stride];
+    temp[idx + GROUP_SIZE] = data[stride - 1 + (buffer_pos + GROUP_SIZE) * stride];
+
+    uint offset = 1;
+    for (uint dpow = GROUP_SIZE; dpow > 0; dpow >>= 1)
+    {
+        barrier();
+        if (idx < dpow)
+        {
+            temp[offset * (2*idx + 2) - 1]
+                += temp[offset * (2*idx + 1) - 1];
+        }
+        offset <<= 1;
+    }
+
+    barrier();
+
+    sumTrees[buffer_pos] = temp[idx];
+    sumTrees[buffer_pos + GROUP_SIZE] = temp[idx + GROUP_SIZE];
+}

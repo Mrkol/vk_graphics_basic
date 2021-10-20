@@ -27,14 +27,11 @@ public:
   // debugging utils
   //
   static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
-    VkDebugReportFlagsEXT                       flags,
-    VkDebugReportObjectTypeEXT                  objectType,
-    uint64_t                                    object,
-    size_t                                      location,
-    int32_t                                     messageCode,
+    VkDebugReportFlagsEXT /*flags*/, VkDebugReportObjectTypeEXT /*objectType*/,
+    uint64_t /*object*/, size_t /*location*/, int32_t /*messageCode*/,
     const char* pLayerPrefix,
     const char* pMessage,
-    void* pUserData)
+    void* /*pUserData*/)
   {
     std::cout << pLayerPrefix << ": " << pMessage << std::endl;
     return VK_FALSE;
@@ -42,6 +39,8 @@ public:
 
   VkDebugReportCallbackEXT m_debugReportCallback = nullptr;
 private:
+  constexpr static uint32_t GROUP_SIZE = 32;
+  constexpr static uint32_t BLOCK_SIZE = GROUP_SIZE*2;
 
   VkInstance       m_instance       = VK_NULL_HANDLE;
   VkCommandPool    m_commandPool    = VK_NULL_HANDLE;
@@ -55,9 +54,9 @@ private:
   VkCommandBuffer m_cmdBufferCompute;
   VkFence m_fence;
 
-  std::shared_ptr<vk_utils::DescriptorMaker> m_pBindings = nullptr;
+  std::unique_ptr<vk_utils::DescriptorMaker> m_pBindings = nullptr;
 
-  uint32_t m_length  = 16u;
+  uint32_t m_length;
   
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
   std::vector<const char*> m_deviceExtensions      = {};
@@ -65,20 +64,25 @@ private:
 
   bool m_enableValidation;
   std::vector<const char*> m_validationLayers;
-  std::shared_ptr<vk_utils::ICopyEngine> m_pCopyHelper;
+  std::unique_ptr<vk_utils::ICopyEngine> m_pCopyHelper;
 
-  VkDescriptorSet       m_sumDS; 
-  VkDescriptorSetLayout m_sumDSLayout = nullptr;
+  std::vector<VkDescriptorSet>       m_firstPassDS; 
+  VkDescriptorSetLayout m_firstPassDSLayout = nullptr;
   
-  VkPipeline m_pipeline;
+  std::vector<VkPipeline> m_pipelines;
   VkPipelineLayout m_layout;
 
-  VkBuffer m_A, m_B, m_sum;
+  VkBuffer m_A;
+  std::vector<uint32_t> m_bufSizes;
+  std::vector<VkBuffer> m_recursiveSums;
+
+  uint32_t div(uint32_t x) { return (x + BLOCK_SIZE - 1) / BLOCK_SIZE; }
+  uint32_t round(uint32_t x) { return div(x) * BLOCK_SIZE; }
  
   void CreateInstance();
   void CreateDevice(uint32_t a_deviceId);
 
-  void BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkPipeline a_pipeline);
+  void BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff);
 
   void SetupSimplePipeline();
   void CreateComputePipeline();

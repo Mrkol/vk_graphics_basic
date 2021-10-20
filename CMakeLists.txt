@@ -8,7 +8,7 @@ project(vk_graphics_basic CXX)
 include(cmake/StandardProjectSettings.cmake)
 
 add_library(project_options INTERFACE)
-target_compile_features(project_options INTERFACE cxx_std_17)
+target_compile_features(project_options INTERFACE cxx_std_20)
 
 # Link this 'library' to use the warnings specified in CompilerWarnings.cmake
 add_library(project_warnings INTERFACE)
