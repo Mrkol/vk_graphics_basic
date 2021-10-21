@@ -99,9 +99,7 @@ void SimpleCompute::SetupSimplePipeline()
 
   m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device,
     std::vector{std::pair{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-      // i have no idea how this crazy caching descriptor maker thing works and
-      // why sensible values do not work here
-      uint32_t(10 * m_bufSizes.size())}}, 1);
+      uint32_t(2*(m_bufSizes.size() + 1))}}, m_bufSizes.size() + 1);
 
   // Создание descriptor set для передачи буферов в шейдер
 
