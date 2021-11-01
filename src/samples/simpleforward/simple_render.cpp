@@ -238,7 +238,7 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
 }
 
 void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebuffer a_frameBuff,
-                                            VkImageView a_targetImageView, VkPipeline a_pipeline)
+                                            VkImageView, VkPipeline a_pipeline)
 {
   vkResetCommandBuffer(a_cmdBuff, 0);
 
@@ -428,7 +428,7 @@ void SimpleRender::RecreateSwapChain()
   }
 
   m_cmdBuffersDrawMain = vk_utils::createCommandBuffers(m_device, m_commandPool, m_framesInFlight);
-  for (size_t i = 0; i < m_swapchain.GetImageCount(); ++i)
+  for (uint32_t i = 0; i < m_swapchain.GetImageCount(); ++i)
   {
     BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
                              m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
@@ -546,7 +546,7 @@ void SimpleRender::ProcessInput(const AppInput &input)
 
     SetupSimplePipeline();
 
-    for (size_t i = 0; i < m_framesInFlight; ++i)
+    for (uint32_t i = 0; i < m_framesInFlight; ++i)
     {
       BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
                                m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
@@ -594,7 +594,7 @@ void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
 
   UpdateView();
 
-  for (size_t i = 0; i < m_framesInFlight; ++i)
+  for (uint32_t i = 0; i < m_framesInFlight; ++i)
   {
     BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
                              m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
@@ -732,7 +732,7 @@ void SimpleRender::DrawFrameWithGUI()
   submitInfo.waitSemaphoreCount = 1;
   submitInfo.pWaitSemaphores = waitSemaphores;
   submitInfo.pWaitDstStageMask = waitStages;
-  submitInfo.commandBufferCount = submitCmdBufs.size();
+  submitInfo.commandBufferCount = (uint32_t)submitCmdBufs.size();
   submitInfo.pCommandBuffers = submitCmdBufs.data();
 
   VkSemaphore signalSemaphores[] = {m_presentationResources.renderingFinished};
