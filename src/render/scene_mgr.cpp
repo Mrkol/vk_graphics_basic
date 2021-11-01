@@ -220,10 +220,13 @@ void SceneManager::LoadGeoDataOnGPU()
       {m_geoVertBuf, m_geoIdxBuf, m_meshInfoBuf, m_instanceInfosBuffer, m_instanceMatricesBuffer}, allocFlags);
 
   std::vector<GpuMeshInfo> mesh_info_tmp;
-  for(const auto& m : m_meshInfos)
+  for(std::size_t i = 0; i < m_meshInfos.size(); ++i)
   {
-    mesh_info_tmp.emplace_back(m.m_indNum, m.m_indexOffset, m.m_vertexOffset
-      /* TODO: bounding boxes */);
+    const auto& info = m_meshInfos[i];
+    const auto& aabb = m_meshBboxes[i];
+    mesh_info_tmp.emplace_back(info.m_indNum, info.m_indexOffset, info.m_vertexOffset,
+      LiteMath::float3(aabb.boxMin.x, aabb.boxMin.y, aabb.boxMin.z),
+      LiteMath::float3(aabb.boxMax.x, aabb.boxMax.y, aabb.boxMax.z));
   }
 
   m_pCopyHelper->UpdateBuffer(m_geoVertBuf, 0,

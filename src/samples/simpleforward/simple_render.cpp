@@ -218,7 +218,7 @@ void SimpleRender::CreateUniformBuffer()
   
   // worst case we'll see all instances
   m_instanceMappingBuffer = vk_utils::createBuffer(m_device, sizeof(uint32_t)*(m_pScnMgr->InstancesNum() + 1),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
   // worst case we'll have to draw all model types
   m_indirectDrawBuffer = vk_utils::createBuffer(m_device, sizeof(VkDrawIndexedIndirectCommand) * m_pScnMgr->MeshesNum(),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
@@ -544,7 +544,9 @@ void SimpleRender::ProcessInput(const AppInput &input)
     std::system("cd ../resources/shaders && python3 compile_simple_render_shaders.py");
 #endif
 
+    // TODO: destroy previous pipeline
     SetupSimplePipeline();
+    SetupCullingPipeline();
 
     for (uint32_t i = 0; i < m_framesInFlight; ++i)
     {
@@ -692,6 +694,53 @@ void SimpleRender::SetupGUIElements()
     ImGui::Text("Culling shader path: %s", CULLING_SHADER_PATH);
     ImGui::End();
   }
+
+  /*
+  for (std::size_t i = 0; i < m_pScnMgr->InstancesNum(); ++i)
+  {
+    auto instInfo = m_pScnMgr->GetInstanceInfo(i);
+    auto bbox = m_pScnMgr->GetMeshBBox(instInfo.mesh_id);
+    auto model = m_pScnMgr->GetInstanceMatrix(i);
+    std::array boxPoints {
+      float3{bbox.boxMin.x, bbox.boxMin.y, bbox.boxMin.z},
+      float3{bbox.boxMin.x, bbox.boxMin.y, bbox.boxMax.z},
+      float3{bbox.boxMin.x, bbox.boxMax.y, bbox.boxMin.z},
+      float3{bbox.boxMin.x, bbox.boxMax.y, bbox.boxMax.z},
+      float3{bbox.boxMax.x, bbox.boxMin.y, bbox.boxMin.z},
+      float3{bbox.boxMax.x, bbox.boxMin.y, bbox.boxMax.z},
+      float3{bbox.boxMax.x, bbox.boxMax.y, bbox.boxMin.z},
+      float3{bbox.boxMax.x, bbox.boxMax.y, bbox.boxMax.z}
+    };
+    for (auto point : boxPoints)
+    {
+      auto transformed = graphicsPushConsts.projView * model * float4{point.x, point.y, point.z, 1};
+      transformed /= transformed.w;
+      ImVec4 color(0, 1, 0, 1);
+      if (transformed.x < -0.5 || transformed.x > 0.5 || transformed.y < -0.5 || transformed.y > 0.5)
+      {
+        color = ImVec4(1, 0, 0, 1);
+      }
+      if (transformed.z < 0 || transformed.z > 1)
+      {
+        continue;
+      }
+      ImGui::GetBackgroundDrawList()->AddCircleFilled({(1 + transformed.x)/2 * m_width, (1 + transformed.y)/2 * m_height}, 2,
+          ImGui::GetColorU32(color));
+    }
+  }
+
+  std::array pts{
+    std::pair{ImVec2{m_width/4.f, m_height/4.f}, ImVec2{3*m_width/4.f, m_height/4.f}},
+    std::pair{ImVec2{m_width/4.f, m_height/4.f}, ImVec2{m_width/4.f, 3*m_height/4.f}},
+    std::pair{ImVec2{3*m_width/4.f, 3*m_height/4.f}, ImVec2{3*m_width/4.f, m_height/4.f}},
+    std::pair{ImVec2{3*m_width/4.f, 3*m_height/4.f}, ImVec2{m_width/4.f, 3*m_height/4.f}},
+  };
+
+  for (auto[a, b] : pts)
+  {
+    ImGui::GetBackgroundDrawList()->AddLine(a, b, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)), 2);
+  }
+  */
 
   // Rendering
   ImGui::Render();

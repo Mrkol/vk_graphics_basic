@@ -55,6 +55,12 @@ struct SceneManager
   VkBuffer GetInstanceInfosBuffer()  const { return m_instanceInfosBuffer; }
   VkBuffer GetInstanceMatricesBuffer() const { return m_instanceMatricesBuffer; }
 
+  // Debug stuff
+  GpuInstanceInfo GetInstanceInfo(std::size_t i) const { return m_instanceInfos[i]; }
+  LiteMath::float4x4 GetInstanceMatrix(std::size_t i) const { return m_instanceMatrices[i]; }
+  LiteMath::Box4f GetMeshBBox(std::size_t i) const { return m_meshBboxes[i]; }
+  // /debug stuff
+
   std::shared_ptr<vk_utils::ICopyEngine> GetCopyHelper() { return  m_pCopyHelper; }
 
   uint32_t MeshesNum() const {return (uint32_t)m_meshInfos.size();}
@@ -62,7 +68,7 @@ struct SceneManager
 
   hydra_xml::Camera GetCamera(uint32_t camId) const;
   MeshInfo GetMeshInfo(uint32_t meshId) const {assert(meshId < m_meshInfos.size()); return m_meshInfos[meshId];}
-  LiteMath::Box4f GetInstanceBbox(uint32_t instId) const {assert(instId < m_instanceBboxes.size()); return m_instanceBboxes[instId];}
+
   LiteMath::float4x4 GetInstanceMatrix(uint32_t instId) const {assert(instId < m_instanceMatrices.size()); return m_instanceMatrices[instId];}
   LiteMath::Box4f GetSceneBbox() const {return sceneBbox;}
 

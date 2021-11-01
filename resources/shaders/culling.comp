@@ -62,24 +62,6 @@ layout(std430, binding = 4) buffer model_infos_t
     ModelInfo modelInfos[];
 };
 
-vec3 AABB_min(uint i)
-{
-    return vec3(
-            modelInfos[i].AABB[0],
-            modelInfos[i].AABB[1],
-            modelInfos[i].AABB[2]
-        );
-}
-
-vec3 AABB_max(uint i)
-{
-    return vec3(
-            modelInfos[i].AABB[3],
-            modelInfos[i].AABB[4],
-            modelInfos[i].AABB[5]
-        );
-}
-
 // If there are more than 32K instances of a certain model, we are doomed
 shared uint ourMapping[8192];
 shared uint ourVisibleInstanceCount;
@@ -94,6 +76,19 @@ void main()
 
     // Is this necessary? Can't we synchronize the init above with fetch adds with memory barriers only?
     barrier();
+
+    
+        
+    vec3 BBOX[8] = {
+        vec3(modelInfos[model_idx].AABB[0], modelInfos[model_idx].AABB[1], modelInfos[model_idx].AABB[2]),
+        vec3(modelInfos[model_idx].AABB[0], modelInfos[model_idx].AABB[1], modelInfos[model_idx].AABB[5]),
+        vec3(modelInfos[model_idx].AABB[0], modelInfos[model_idx].AABB[4], modelInfos[model_idx].AABB[2]),
+        vec3(modelInfos[model_idx].AABB[0], modelInfos[model_idx].AABB[4], modelInfos[model_idx].AABB[5]),
+        vec3(modelInfos[model_idx].AABB[3], modelInfos[model_idx].AABB[1], modelInfos[model_idx].AABB[2]),
+        vec3(modelInfos[model_idx].AABB[3], modelInfos[model_idx].AABB[1], modelInfos[model_idx].AABB[5]),
+        vec3(modelInfos[model_idx].AABB[3], modelInfos[model_idx].AABB[4], modelInfos[model_idx].AABB[2]),
+        vec3(modelInfos[model_idx].AABB[3], modelInfos[model_idx].AABB[4], modelInfos[model_idx].AABB[5])
+        };
   
     for (uint i = idx; i < params.instanceCount; i += GROUP_SIZE)
     {
@@ -102,7 +97,31 @@ void main()
             continue;
         }
 
-        // TODO: check visibility
+        bool left = true;
+        bool right = true;
+        bool top = true;
+        bool bottom = true;
+        bool front = true;
+        bool back = true;
+        for (uint j = 0; j < 8; ++j)
+        {
+            vec4 screenspacePt = params.mProjView * instanceMatrices[i] * vec4(BBOX[j], 1.0f);
+            screenspacePt /= screenspacePt.w;
+            // if of AABB's vertices are on one side of a certain line,
+            // all of it is on that side of the line
+            // (lines are left-right-top-bottom of the screen)
+            left = left && screenspacePt.x < -1;
+            right = right && screenspacePt.x > 1;
+            top = top && screenspacePt.y < -1;
+            bottom = bottom && screenspacePt.y > 1;
+            front = front && screenspacePt.z > 1;
+            back = back && screenspacePt.z < 0;
+        }
+
+        if (left || right|| top || bottom || front || back)
+        {
+            continue;
+        }
 
 
         // We do not need ordering of these adds between themselves
@@ -112,6 +131,7 @@ void main()
     }
 
     // Wait for all threads to complete their culling
+    // also ensures that the subsequent ourVisibleInstanceCount read will see all atomic adds
     barrier();
 
     uint myVisibleInstanceCount = ourVisibleInstanceCount;
@@ -122,6 +142,7 @@ void main()
     }
     
     // Wait for thread 0 to get our mapping start
+    // and ensure HB between the following ourMappingStart read and the previous write
     barrier();
 
     uint myMappingStart = ourMappingStart;
