@@ -170,15 +170,12 @@ uint32_t SceneManager::InstanceMesh(const uint32_t meshId, const LiteMath::float
   //@TODO: maybe move
   m_instanceMatrices.push_back(matrix);
 
-  InstanceInfo info;
-  info.inst_id       = m_instanceMatrices.size() - 1;
+  GpuInstanceInfo info;
   info.mesh_id       = meshId;
   info.renderMark    = markForRender;
-  info.instBufOffset = (m_instanceMatrices.size() - 1) * sizeof(matrix);
-
   m_instanceInfos.push_back(info);
 
-  return info.inst_id;
+  return m_instanceMatrices.size() - 1;
 }
 
 void SceneManager::MarkInstance(const uint32_t instId)
@@ -197,26 +194,47 @@ void SceneManager::LoadGeoDataOnGPU()
 {
   VkDeviceSize vertexBufSize = m_pMeshData->VertexDataSize();
   VkDeviceSize indexBufSize  = m_pMeshData->IndexDataSize();
-  VkDeviceSize infoBufSize   = m_meshInfos.size() * sizeof(uint32_t) * 2;
-
-  m_geoVertBuf  = vk_utils::createBuffer(m_device, vertexBufSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-  m_geoIdxBuf   = vk_utils::createBuffer(m_device, indexBufSize,  VK_BUFFER_USAGE_INDEX_BUFFER_BIT  | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-  m_meshInfoBuf = vk_utils::createBuffer(m_device, infoBufSize,   VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  VkDeviceSize infoBufSize   = m_meshInfos.size() * sizeof(GpuMeshInfo);
+  VkDeviceSize instanceInfoBufSize = m_instanceInfos.size() * sizeof(GpuInstanceInfo);
+  VkDeviceSize instanceMatrixBufSize = m_instanceMatrices.size() * sizeof(LiteMath::float4x4);
+  
+  m_geoVertBuf  = vk_utils::createBuffer(m_device, vertexBufSize,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  m_geoIdxBuf   = vk_utils::createBuffer(m_device, indexBufSize,
+      VK_BUFFER_USAGE_INDEX_BUFFER_BIT  | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  m_meshInfoBuf = vk_utils::createBuffer(m_device, infoBufSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  m_instanceInfosBuffer = vk_utils::createBuffer(m_device, instanceInfoBufSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  m_instanceMatricesBuffer = vk_utils::createBuffer(m_device, instanceMatrixBufSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
   VkMemoryAllocateFlags allocFlags {};
 
-  m_geoMemAlloc = vk_utils::allocateAndBindWithPadding(m_device, m_physDevice, {m_geoVertBuf, m_geoIdxBuf, m_meshInfoBuf}, allocFlags);
+  m_geoMemAlloc = vk_utils::allocateAndBindWithPadding(m_device, m_physDevice,
+      {m_geoVertBuf, m_geoIdxBuf, m_meshInfoBuf, m_instanceInfosBuffer, m_instanceMatricesBuffer}, allocFlags);
 
-  std::vector<LiteMath::uint2> mesh_info_tmp;
+  std::vector<GpuMeshInfo> mesh_info_tmp;
   for(const auto& m : m_meshInfos)
   {
-    mesh_info_tmp.emplace_back(m.m_indexOffset, m.m_vertexOffset);
+    mesh_info_tmp.emplace_back(m.m_indNum, m.m_indexOffset, m.m_vertexOffset
+      /* TODO: bounding boxes */);
   }
 
-  m_pCopyHelper->UpdateBuffer(m_geoVertBuf, 0, m_pMeshData->VertexData(), vertexBufSize);
-  m_pCopyHelper->UpdateBuffer(m_geoIdxBuf,  0, m_pMeshData->IndexData(), indexBufSize);
-  if(!mesh_info_tmp.empty())
-    m_pCopyHelper->UpdateBuffer(m_meshInfoBuf,  0, mesh_info_tmp.data(), mesh_info_tmp.size() * sizeof(mesh_info_tmp[0]));
+  m_pCopyHelper->UpdateBuffer(m_geoVertBuf, 0,
+      m_pMeshData->VertexData(), vertexBufSize);
+
+  m_pCopyHelper->UpdateBuffer(m_geoIdxBuf, 0,
+      m_pMeshData->IndexData(), indexBufSize);
+
+  m_pCopyHelper->UpdateBuffer(m_meshInfoBuf, 0,
+      mesh_info_tmp.data(), mesh_info_tmp.size() * sizeof(mesh_info_tmp[0]));
+
+  m_pCopyHelper->UpdateBuffer(m_instanceInfosBuffer, 0,
+      m_instanceInfos.data(), m_instanceInfos.size() * sizeof(m_instanceInfos[0]));
+
+  m_pCopyHelper->UpdateBuffer(m_instanceMatricesBuffer, 0,
+      m_instanceMatrices.data(), m_instanceMatrices.size() * sizeof(m_instanceMatrices[0]));
 }
 
 void SceneManager::DrawMarkedInstances()
@@ -248,6 +266,12 @@ void SceneManager::DestroyScene()
   {
     vkDestroyBuffer(m_device, m_instanceMatricesBuffer, nullptr);
     m_instanceMatricesBuffer = VK_NULL_HANDLE;
+  }
+
+  if(m_instanceInfosBuffer != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_instanceInfosBuffer, nullptr);
+    m_instanceInfosBuffer = VK_NULL_HANDLE;
   }
 
   if(m_geoMemAlloc != VK_NULL_HANDLE)

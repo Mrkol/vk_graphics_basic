@@ -1,0 +1,145 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_EXT_debug_printf : enable
+
+#define GROUP_SIZE 256
+
+layout( local_size_x = GROUP_SIZE ) in;
+
+ 
+layout(push_constant) uniform params_t
+{
+    mat4 mProjView;
+    uint instanceCount;
+    uint modelCount;
+} params;
+
+struct IndirectCall
+{
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, binding = 0) buffer indirection_t
+{
+    IndirectCall indirections[];
+};
+
+layout(std430, binding = 1) buffer mapping_t
+{
+    uint mappings[];
+};
+
+struct InstanceInfo
+{
+    uint modelId;
+    uint doRender;
+};
+
+layout(std430, binding = 2) buffer instance_infos_t
+{
+    InstanceInfo instanceInfos[];
+};
+
+layout(std430, binding = 3) buffer instance_matrices_t
+{
+    mat4 instanceMatrices[];
+};
+
+struct ModelInfo
+{
+    uint indexCount;
+    uint indexOffset;
+    uint vertexOffset;
+    float AABB[6];
+};
+
+layout(std430, binding = 4) buffer model_infos_t
+{
+    ModelInfo modelInfos[];
+};
+
+vec3 AABB_min(uint i)
+{
+    return vec3(
+            modelInfos[i].AABB[0],
+            modelInfos[i].AABB[1],
+            modelInfos[i].AABB[2]
+        );
+}
+
+vec3 AABB_max(uint i)
+{
+    return vec3(
+            modelInfos[i].AABB[3],
+            modelInfos[i].AABB[4],
+            modelInfos[i].AABB[5]
+        );
+}
+
+// If there are more than 32K instances of a certain model, we are doomed
+shared uint ourMapping[8192];
+shared uint ourVisibleInstanceCount;
+shared uint ourMappingStart;
+
+void main()
+{
+    uint model_idx = gl_WorkGroupID.x;
+    uint idx = gl_LocalInvocationID.x;
+    
+    if (idx == 0) { ourVisibleInstanceCount = 0; }
+
+    // Is this necessary? Can't we synchronize the init above with fetch adds with memory barriers only?
+    barrier();
+  
+    for (uint i = idx; i < params.instanceCount; i += GROUP_SIZE)
+    {
+        if (instanceInfos[i].modelId != model_idx || instanceInfos[i].doRender == 0)
+        {
+            continue;
+        }
+
+        // TODO: check visibility
+
+
+        // We do not need ordering of these adds between themselves
+        uint mappingSlot = atomicAdd(ourVisibleInstanceCount, 1);
+        
+        ourMapping[mappingSlot] = i;
+    }
+
+    // Wait for all threads to complete their culling
+    barrier();
+
+    uint myVisibleInstanceCount = ourVisibleInstanceCount;
+
+    if (idx == 0)
+    {
+        ourMappingStart = atomicAdd(mappings[0], myVisibleInstanceCount);
+    }
+    
+    // Wait for thread 0 to get our mapping start
+    barrier();
+
+    uint myMappingStart = ourMappingStart;
+
+    for (uint i = idx; i < myVisibleInstanceCount; i += GROUP_SIZE)
+    {
+        uint myMapping = ourMapping[i];
+        mappings[1 + ourMappingStart + i] = myMapping;
+    }
+    
+    if (idx == 0)
+    {
+        indirections[model_idx].indexCount = modelInfos[model_idx].indexCount;
+        indirections[model_idx].instanceCount = ourVisibleInstanceCount;
+        indirections[model_idx].firstIndex = modelInfos[model_idx].indexOffset;
+        indirections[model_idx].vertexOffset = int(modelInfos[model_idx].vertexOffset);
+        indirections[model_idx].firstInstance = 1 + myMappingStart;
+    }
+}
+
+

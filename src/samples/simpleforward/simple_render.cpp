@@ -17,11 +17,14 @@ SimpleRender::SimpleRender(uint32_t a_width, uint32_t a_height) : m_width(a_widt
 void SimpleRender::SetupDeviceFeatures()
 {
   // m_enabledDeviceFeatures.fillModeNonSolid = VK_TRUE;
+  m_enabledDeviceFeatures.multiDrawIndirect = true;
+  m_enabledDeviceFeatures.drawIndirectFirstInstance = true;
 }
 
 void SimpleRender::SetupDeviceExtensions()
 {
   m_deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  m_deviceExtensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
 }
 
 void SimpleRender::SetupValidationLayers()
@@ -101,7 +104,7 @@ void SimpleRender::CreateInstance()
   appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
   appInfo.pEngineName        = "SimpleForward";
   appInfo.engineVersion      = VK_MAKE_VERSION(0, 1, 0);
-  appInfo.apiVersion         = VK_MAKE_VERSION(1, 1, 0);
+  appInfo.apiVersion         = VK_MAKE_VERSION(1, 2, 0);
 
   m_instance = vk_utils::createInstance(m_enableValidation, m_validationLayers, m_instanceExtensions, &appInfo);
 
@@ -126,16 +129,20 @@ void SimpleRender::CreateDevice(uint32_t a_deviceId)
 
 void SimpleRender::SetupSimplePipeline()
 {
-  std::vector<std::pair<VkDescriptorType, uint32_t> > dtypes = {
-      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             1}
-  };
-
   if(m_pBindings == nullptr)
-    m_pBindings = std::make_shared<vk_utils::DescriptorMaker>(m_device, dtypes, 1);
+  {
+    std::vector<std::pair<VkDescriptorType, uint32_t> > dtypes = {
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}
+    };
+    m_pBindings = std::make_shared<vk_utils::DescriptorMaker>(m_device, dtypes, 2);
+  }
 
-  m_pBindings->BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+  m_pBindings->BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
   m_pBindings->BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-  m_pBindings->BindEnd(&m_dSet, &m_dSetLayout);
+  m_pBindings->BindBuffer(1, m_instanceMappingBuffer);
+  m_pBindings->BindBuffer(2, m_pScnMgr->GetInstanceMatricesBuffer());
+  m_pBindings->BindEnd(&m_graphicsDescriptorSet, &m_graphicsDescriptorSetLayout);
 
   // if we are recreating pipeline (for example, to reload shaders)
   // we need to cleanup old pipeline
@@ -153,23 +160,40 @@ void SimpleRender::SetupSimplePipeline()
   vk_utils::GraphicsPipelineMaker maker;
 
   std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths;
-  shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = FRAGMENT_SHADER_PATH + ".spv";
-  shader_paths[VK_SHADER_STAGE_VERTEX_BIT]   = VERTEX_SHADER_PATH + ".spv";
+  shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = std::string{FRAGMENT_SHADER_PATH} + ".spv";
+  shader_paths[VK_SHADER_STAGE_VERTEX_BIT]   = std::string{VERTEX_SHADER_PATH} + ".spv";
 
   maker.LoadShaders(m_device, shader_paths);
 
-  m_basicForwardPipeline.layout = maker.MakeLayout(m_device, {m_dSetLayout}, sizeof(pushConst2M));
+  m_basicForwardPipeline.layout = maker.MakeLayout(m_device, {m_graphicsDescriptorSetLayout}, sizeof(graphicsPushConsts));
   maker.SetDefaultState(m_width, m_height);
 
   m_basicForwardPipeline.pipeline = maker.MakePipeline(m_device, m_pScnMgr->GetPipelineVertexInputStateCreateInfo(),
                                                        m_screenRenderPass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
 }
 
+void SimpleRender::SetupCullingPipeline()
+{
+  m_pBindings->BindBegin(VK_SHADER_STAGE_COMPUTE_BIT);
+  m_pBindings->BindBuffer(0, m_indirectDrawBuffer);
+  m_pBindings->BindBuffer(1, m_instanceMappingBuffer);
+  m_pBindings->BindBuffer(2, m_pScnMgr->GetInstanceInfosBuffer());
+  m_pBindings->BindBuffer(3, m_pScnMgr->GetInstanceMatricesBuffer());
+  m_pBindings->BindBuffer(4, m_pScnMgr->GetModelInfosBuffer());
+  m_pBindings->BindEnd(&m_cullingDescriptorSet, &m_cullingDescriptorSetLayout);
+  
+  vk_utils::ComputePipelineMaker maker;
+  maker.LoadShader(m_device, std::string{CULLING_SHADER_PATH} + ".spv");
+
+  m_cullingPipeline.layout = maker.MakeLayout(m_device, {m_cullingDescriptorSetLayout}, sizeof(cullingPushConsts));
+  m_cullingPipeline.pipeline = maker.MakePipeline(m_device);
+}
+
 void SimpleRender::CreateUniformBuffer()
 {
   VkMemoryRequirements memReq;
   m_ubo = vk_utils::createBuffer(m_device, sizeof(UniformParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &memReq);
-
+  
   VkMemoryAllocateInfo allocateInfo = {};
   allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocateInfo.pNext = nullptr;
@@ -189,6 +213,21 @@ void SimpleRender::CreateUniformBuffer()
   m_uniforms.animateLightColor = true;
 
   UpdateUniformBuffer(0.0f);
+
+
+  
+  // worst case we'll see all instances
+  m_instanceMappingBuffer = vk_utils::createBuffer(m_device, sizeof(uint32_t)*(m_pScnMgr->InstancesNum() + 1),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  // worst case we'll have to draw all model types
+  m_indirectDrawBuffer = vk_utils::createBuffer(m_device, sizeof(VkDrawIndexedIndirectCommand) * m_pScnMgr->MeshesNum(),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+
+  
+  VkMemoryAllocateFlags allocFlags {};
+
+  m_indirectRenderingMemory = vk_utils::allocateAndBindWithPadding(m_device, m_physicalDevice,
+      {m_instanceMappingBuffer, m_indirectDrawBuffer}, allocFlags);
 }
 
 void SimpleRender::UpdateUniformBuffer(float a_time)
@@ -208,6 +247,71 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
   beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
 
   VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo));
+
+
+  vkCmdFillBuffer(a_cmdBuff, m_instanceMappingBuffer, 0, sizeof(uint), 0);
+
+
+  {
+    std::array bufferMemBarriers
+    {
+      VkBufferMemoryBarrier {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .buffer = m_instanceMappingBuffer,
+        .offset = 0,
+        .size = sizeof(uint)
+      }
+    };
+
+    vkCmdPipelineBarrier(a_cmdBuff,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        {},
+        0, nullptr,
+        bufferMemBarriers.size(), bufferMemBarriers.data(),
+        0, nullptr);
+  }
+
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullingPipeline.pipeline);
+  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullingPipeline.layout, 0, 1, &m_cullingDescriptorSet, 0, nullptr);
+  vkCmdPushConstants(a_cmdBuff, m_cullingPipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT,
+      0, sizeof(cullingPushConsts), &cullingPushConsts);
+
+  vkCmdDispatch(a_cmdBuff, m_pScnMgr->MeshesNum(), 1, 1);
+
+  {
+    std::array bufferMemBarriers
+    {
+      VkBufferMemoryBarrier {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+        .buffer = m_indirectDrawBuffer,
+        .offset = 0,
+        .size = VK_WHOLE_SIZE
+      },
+      VkBufferMemoryBarrier {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .buffer = m_instanceMappingBuffer,
+        .offset = 0,
+        .size = VK_WHOLE_SIZE
+      }
+    };
+
+    vkCmdPipelineBarrier(a_cmdBuff,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+        {},
+        0, nullptr,
+        bufferMemBarriers.size(), bufferMemBarriers.data(),
+        0, nullptr);
+  }
+
+
 
   vk_utils::setDefaultViewport(a_cmdBuff, static_cast<float>(m_width), static_cast<float>(m_height));
   vk_utils::setDefaultScissor(a_cmdBuff, m_width, m_height);
@@ -231,7 +335,7 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
     vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, a_pipeline);
 
     vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_basicForwardPipeline.layout, 0, 1,
-                            &m_dSet, 0, VK_NULL_HANDLE);
+                            &m_graphicsDescriptorSet, 0, VK_NULL_HANDLE);
 
     VkShaderStageFlags stageFlags = (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
@@ -242,17 +346,10 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
     vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &vertexBuf, &zero_offset);
     vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
 
-    for (size_t i = 0; i < m_pScnMgr->InstancesNum(); ++i)
-    {
-      auto inst = m_pScnMgr->GetInstanceInfo(i);
+    vkCmdPushConstants(a_cmdBuff, m_basicForwardPipeline.layout, stageFlags, 0,
+        sizeof(graphicsPushConsts), &graphicsPushConsts);
 
-      pushConst2M.model = m_pScnMgr->GetInstanceMatrix(i);
-      vkCmdPushConstants(a_cmdBuff, m_basicForwardPipeline.layout, stageFlags, 0,
-                         sizeof(pushConst2M), &pushConst2M);
-
-      auto mesh_info = m_pScnMgr->GetMeshInfo(inst.mesh_id);
-      vkCmdDrawIndexed(a_cmdBuff, mesh_info.m_indNum, 1, mesh_info.m_indexOffset, mesh_info.m_vertexOffset, 0);
-    }
+    vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
 
     vkCmdEndRenderPass(a_cmdBuff);
   }
@@ -385,6 +482,18 @@ void SimpleRender::Cleanup()
     m_ubo = VK_NULL_HANDLE;
   }
 
+  if(m_indirectDrawBuffer != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_indirectDrawBuffer, nullptr);
+    m_indirectDrawBuffer = VK_NULL_HANDLE;
+  }
+
+  if(m_instanceMappingBuffer != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_instanceMappingBuffer, nullptr);
+    m_instanceMappingBuffer = VK_NULL_HANDLE;
+  }
+
   if(m_uboAlloc != VK_NULL_HANDLE)
   {
     vkFreeMemory(m_device, m_uboAlloc, nullptr);
@@ -460,7 +569,12 @@ void SimpleRender::UpdateView()
   auto mProj           = projectionMatrix(m_cam.fov, aspect, 0.1f, 1000.0f);
   auto mLookAt         = LiteMath::lookAt(m_cam.pos, m_cam.lookAt, m_cam.up);
   auto mWorldViewProj  = mProjFix * mProj * mLookAt;
-  pushConst2M.projView = mWorldViewProj;
+  graphicsPushConsts.projView = mWorldViewProj;
+  cullingPushConsts.projView = mWorldViewProj;
+
+  // TODO: should this really be here?
+  cullingPushConsts.instanceCount = m_pScnMgr->InstancesNum();
+  cullingPushConsts.modelCount = m_pScnMgr->MeshesNum();
 }
 
 void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
@@ -469,6 +583,7 @@ void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
 
   CreateUniformBuffer();
   SetupSimplePipeline();
+  SetupCullingPipeline();
 
   auto loadedCam = m_pScnMgr->GetCamera(0);
   m_cam.fov = loadedCam.fov;
@@ -572,8 +687,9 @@ void SimpleRender::SetupGUIElements()
 
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f),"Press 'B' to recompile and reload shaders");
     ImGui::Text("Changing bindings is not supported.");
-    ImGui::Text("Vertex shader path: %s", VERTEX_SHADER_PATH.c_str());
-    ImGui::Text("Fragment shader path: %s", FRAGMENT_SHADER_PATH.c_str());
+    ImGui::Text("Vertex shader path: %s", VERTEX_SHADER_PATH);
+    ImGui::Text("Fragment shader path: %s", FRAGMENT_SHADER_PATH);
+    ImGui::Text("Culling shader path: %s", CULLING_SHADER_PATH);
     ImGui::End();
   }
 

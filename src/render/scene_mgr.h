@@ -10,12 +10,19 @@
 #include "../loader_utils/hydraxml.h"
 #include "../resources/shaders/common.h"
 
-struct InstanceInfo
+struct GpuInstanceInfo
 {
-  uint32_t inst_id = 0u;
   uint32_t mesh_id = 0u;
-  VkDeviceSize instBufOffset = 0u;
-  bool renderMark = false;
+  VkBool32 renderMark = false;
+};
+
+struct GpuMeshInfo
+{
+  uint32_t indexCount;
+  uint32_t indexOffset;
+  uint32_t vertexOffset;
+  LiteMath::float3 AABB_min{};
+  LiteMath::float3 AABB_max{};
 };
 
 struct SceneManager
@@ -43,7 +50,11 @@ struct SceneManager
 
   VkBuffer GetVertexBuffer() const { return m_geoVertBuf; }
   VkBuffer GetIndexBuffer()  const { return m_geoIdxBuf; }
-  VkBuffer GetMeshInfoBuffer()  const { return m_meshInfoBuf; }
+  VkBuffer GetModelInfosBuffer() const { return m_meshInfoBuf; }
+  
+  VkBuffer GetInstanceInfosBuffer()  const { return m_instanceInfosBuffer; }
+  VkBuffer GetInstanceMatricesBuffer() const { return m_instanceMatricesBuffer; }
+
   std::shared_ptr<vk_utils::ICopyEngine> GetCopyHelper() { return  m_pCopyHelper; }
 
   uint32_t MeshesNum() const {return m_meshInfos.size();}
@@ -51,7 +62,6 @@ struct SceneManager
 
   hydra_xml::Camera GetCamera(uint32_t camId) const;
   MeshInfo GetMeshInfo(uint32_t meshId) const {assert(meshId < m_meshInfos.size()); return m_meshInfos[meshId];}
-  InstanceInfo GetInstanceInfo(uint32_t instId) const {assert(instId < m_instanceInfos.size()); return m_instanceInfos[instId];}
   LiteMath::float4x4 GetInstanceMatrix(uint32_t instId) const {assert(instId < m_instanceMatrices.size()); return m_instanceMatrices[instId];}
 
 private:
@@ -60,7 +70,7 @@ private:
   std::vector<MeshInfo> m_meshInfos = {};
   std::shared_ptr<IMeshData> m_pMeshData = nullptr;
 
-  std::vector<InstanceInfo> m_instanceInfos = {};
+  std::vector<GpuInstanceInfo> m_instanceInfos = {};
   std::vector<LiteMath::float4x4> m_instanceMatrices = {};
 
   std::vector<hydra_xml::Camera> m_sceneCameras = {};
@@ -71,7 +81,10 @@ private:
   VkBuffer m_geoVertBuf = VK_NULL_HANDLE;
   VkBuffer m_geoIdxBuf  = VK_NULL_HANDLE;
   VkBuffer m_meshInfoBuf  = VK_NULL_HANDLE;
+
+  VkBuffer m_instanceInfosBuffer = VK_NULL_HANDLE;
   VkBuffer m_instanceMatricesBuffer = VK_NULL_HANDLE;
+
   VkDeviceMemory m_geoMemAlloc = VK_NULL_HANDLE;
 
   VkDevice m_device = VK_NULL_HANDLE;
