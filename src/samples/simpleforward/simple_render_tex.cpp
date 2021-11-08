@@ -28,7 +28,7 @@ void SimpleRenderTexture::LoadScene(const char* path, bool transpose_inst_matric
   for (uint32_t i = 0; i < m_framesInFlight; ++i)
   {
     BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
-      m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
+      m_swapchain.GetAttachment(i).view, m_basicForwardPipeline);
   }
 }
 
@@ -146,7 +146,7 @@ void SimpleRenderTexture::ProcessInput(const AppInput &input)
     for (uint32_t i = 0; i < m_framesInFlight; ++i)
     {
       BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
-        m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
+        m_swapchain.GetAttachment(i).view, m_basicForwardPipeline);
     }
   }
 

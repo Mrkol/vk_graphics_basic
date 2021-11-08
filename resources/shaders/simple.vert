@@ -1,7 +1,7 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : require
-#extension GL_EXT_debug_printf : enable
+
 
 #include "unpack_attributes.h"
 
@@ -30,10 +30,7 @@ layout (location = 0 ) out VS_OUT
     vec3 wNorm;
     vec3 wTangent;
     vec2 texCoord;
-    vec3 color;
 } vOut;
-
-out gl_PerVertex { vec4 gl_Position; };
 
 
 void main(void)
@@ -47,8 +44,6 @@ void main(void)
     vOut.wNorm    = mat3(transpose(inverse(model))) * wNorm.xyz;
     vOut.wTangent = mat3(transpose(inverse(model))) * wTang.xyz;
     vOut.texCoord = vTexCoordAndTang.xy;
-
-    vOut.color = floor(vOut.wNorm.xyz * 4) / 4;
 
     gl_Position   = params.mProjView * vec4(vOut.wPos, 1.0);
 }

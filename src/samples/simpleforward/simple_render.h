@@ -19,7 +19,9 @@ class SimpleRender : public IRender
 {
 public:
   static constexpr char const* VERTEX_SHADER_PATH = "../resources/shaders/simple.vert";
+  static constexpr char const* WIREFRAME_GEOMETRY_SHADER_PATH = "../resources/shaders/wireframe.geom";
   static constexpr char const* FRAGMENT_SHADER_PATH = "../resources/shaders/simple.frag";
+  static constexpr char const* WIREFRAME_FRAGMENT_SHADER_PATH = "../resources/shaders/wireframe.frag";
   static constexpr char const* CULLING_SHADER_PATH = "../resources/shaders/culling.comp";
 
   SimpleRender(uint32_t a_width, uint32_t a_height);
@@ -108,8 +110,9 @@ protected:
   VkBuffer m_instanceMappingBuffer = VK_NULL_HANDLE;
 
   VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
-
+  
   pipeline_data_t m_basicForwardPipeline {};
+  pipeline_data_t m_basicForwardWireframePipeline {};
 
   pipeline_data_t m_cullingPipeline {};
 
@@ -140,6 +143,7 @@ protected:
   uint32_t m_height = 1024u;
   uint32_t m_framesInFlight  = 2u;
   bool m_vsync = false;
+  bool m_wireframe = false;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
   std::vector<const char*> m_deviceExtensions      = {};
@@ -150,13 +154,15 @@ protected:
 
   std::shared_ptr<SceneManager> m_pScnMgr;
 
+  void ClearPipeline(pipeline_data_t& pipeline);
+
   void DrawFrameSimple();
 
   void CreateInstance();
   void CreateDevice(uint32_t a_deviceId);
 
   void BuildCommandBufferSimple(VkCommandBuffer cmdBuff, VkFramebuffer frameBuff,
-                                VkImageView a_targetImageView, VkPipeline a_pipeline);
+                                VkImageView a_targetImageView, pipeline_data_t a_pipeline);
 
   virtual void SetupSimplePipeline();
   virtual void SetupCullingPipeline();
