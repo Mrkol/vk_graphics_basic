@@ -25,6 +25,12 @@ struct GpuMeshInfo
   LiteMath::float3 AABB_max{};
 };
 
+struct GpuLight
+{
+  LiteMath::float4 positionAndOuterRadius{};
+  LiteMath::float4 colorAndInnerRadius{};
+};
+
 struct SceneManager
 {
   SceneManager(VkDevice a_device, VkPhysicalDevice a_physDevice, uint32_t a_transferQId, uint32_t a_graphicsQId,
@@ -55,6 +61,9 @@ struct SceneManager
   VkBuffer GetInstanceInfosBuffer()  const { return m_instanceInfosBuffer; }
   VkBuffer GetInstanceMatricesBuffer() const { return m_instanceMatricesBuffer; }
 
+  VkBuffer GetLightsBuffer() const { return m_lightsBuffer; }
+  uint32_t LightsNum() const { return (uint32_t) m_sceneLights.size(); }
+
   // Debug stuff
   GpuInstanceInfo GetInstanceInfo(std::size_t i) const { return m_instanceInfos[i]; }
   LiteMath::float4x4 GetInstanceMatrix(std::size_t i) const { return m_instanceMatrices[i]; }
@@ -83,6 +92,7 @@ private:
   std::vector<LiteMath::float4x4> m_instanceMatrices = {};
 
   std::vector<hydra_xml::Camera> m_sceneCameras = {};
+  std::vector<hydra_xml::LightInstance> m_sceneLights = {};
   LiteMath::Box4f sceneBbox;
 
   uint32_t m_totalVertices = 0u;
@@ -95,6 +105,8 @@ private:
   VkBuffer m_instanceInfosBuffer = VK_NULL_HANDLE;
   VkBuffer m_instanceMatricesBuffer = VK_NULL_HANDLE;
 
+  VkBuffer m_lightsBuffer = VK_NULL_HANDLE;
+
   VkDeviceMemory m_geoMemAlloc = VK_NULL_HANDLE;
 
   VkDevice m_device = VK_NULL_HANDLE;
@@ -106,7 +118,6 @@ private:
   VkQueue m_graphicsQ = VK_NULL_HANDLE;
   std::shared_ptr<vk_utils::ICopyEngine> m_pCopyHelper;
 
-  bool m_debug = false;
   // for debugging
   struct Vertex
   {

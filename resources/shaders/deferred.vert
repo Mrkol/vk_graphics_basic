@@ -11,7 +11,8 @@ layout(location = 1) in vec4 vTexCoordAndTang;
 
 layout(push_constant) uniform params_t
 {
-    mat4 mProjView;
+    mat4 mProj;
+    mat4 mView;
 } params;
 
 layout(binding = 1, set = 0) buffer InstanceMapping
@@ -26,9 +27,8 @@ layout(binding = 2, set = 0) buffer ModelMatrices
 
 layout (location = 0 ) out VS_OUT
 {
-    vec3 wPos;
-    vec3 wNorm;
-    vec3 wTangent;
+    vec3 sNorm;
+    vec3 sTangent;
     vec2 texCoord;
 } vOut;
 
@@ -38,12 +38,13 @@ void main(void)
     const vec4 wNorm = vec4(DecodeNormal(floatBitsToInt(vPosNorm.w)),         0.0f);
     const vec4 wTang = vec4(DecodeNormal(floatBitsToInt(vTexCoordAndTang.z)), 0.0f);
 
-    mat4 model = modelMatrices[instanceMapping[gl_InstanceIndex]];
+    mat4 modelView = params.mView * modelMatrices[instanceMapping[gl_InstanceIndex]];
 
-    vOut.wPos     = (model * vec4(vPosNorm.xyz, 1.0f)).xyz;
-    vOut.wNorm    = mat3(transpose(inverse(model))) * wNorm.xyz;
-    vOut.wTangent = mat3(transpose(inverse(model))) * wTang.xyz;
+    mat4 normalModelView = transpose(inverse(modelView));
+
+    vOut.sNorm    = mat3(normalModelView) * wNorm.xyz;
+    vOut.sTangent = mat3(normalModelView) * wTang.xyz;
     vOut.texCoord = vTexCoordAndTang.xy;
 
-    gl_Position   = params.mProjView * vec4(vOut.wPos, 1.0);
+    gl_Position   = params.mProj * modelView * vec4(vPosNorm.xyz, 1.0f);
 }

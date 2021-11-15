@@ -27,8 +27,7 @@ void SimpleRenderTexture::LoadScene(const char* path, bool transpose_inst_matric
 
   for (uint32_t i = 0; i < m_framesInFlight; ++i)
   {
-    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
-      m_swapchain.GetAttachment(i).view, m_basicForwardPipeline);
+    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i]);
   }
 }
 
@@ -65,45 +64,45 @@ void SimpleRenderTexture::LoadTexture()
 
 void SimpleRenderTexture::SetupSimplePipeline()
 {
-  std::vector<std::pair<VkDescriptorType, uint32_t> > dtypes = {
-    {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1},
-    {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1}
-  };
+  // std::vector<std::pair<VkDescriptorType, uint32_t> > dtypes = {
+  //   {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1},
+  //   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1}
+  // };
 
-  if(m_pBindings == nullptr)
-    m_pBindings = std::make_shared<vk_utils::DescriptorMaker>(m_device, dtypes, 1000); // high max sets to allow recreation when texture is updated
+  // if(m_pBindings == nullptr)
+  //   m_pBindings = std::make_shared<vk_utils::DescriptorMaker>(m_device, dtypes, 1000); // high max sets to allow recreation when texture is updated
 
-  m_pBindings->BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
-  m_pBindings->BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-  m_pBindings->BindImage(1, m_texture.view, m_textureSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  m_pBindings->BindEnd(&m_graphicsDescriptorSet, &m_graphicsDescriptorSetLayout);
+  // m_pBindings->BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+  // m_pBindings->BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  // m_pBindings->BindImage(1, m_texture.view, m_textureSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  // m_pBindings->BindEnd(&m_graphicsDescriptorSet, &m_graphicsDescriptorSetLayout);
 
-  // if we are recreating pipeline (for example, to reload shaders)
-  // we need to cleanup old pipeline
-  if(m_basicForwardPipeline.layout != VK_NULL_HANDLE)
-  {
-    vkDestroyPipelineLayout(m_device, m_basicForwardPipeline.layout, nullptr);
-    m_basicForwardPipeline.layout = VK_NULL_HANDLE;
-  }
-  if(m_basicForwardPipeline.pipeline != VK_NULL_HANDLE)
-  {
-    vkDestroyPipeline(m_device, m_basicForwardPipeline.pipeline, nullptr);
-    m_basicForwardPipeline.pipeline = VK_NULL_HANDLE;
-  }
+  // // if we are recreating pipeline (for example, to reload shaders)
+  // // we need to cleanup old pipeline
+  // if(m_basicForwardPipeline.layout != VK_NULL_HANDLE)
+  // {
+  //   vkDestroyPipelineLayout(m_device, m_basicForwardPipeline.layout, nullptr);
+  //   m_basicForwardPipeline.layout = VK_NULL_HANDLE;
+  // }
+  // if(m_basicForwardPipeline.pipeline != VK_NULL_HANDLE)
+  // {
+  //   vkDestroyPipeline(m_device, m_basicForwardPipeline.pipeline, nullptr);
+  //   m_basicForwardPipeline.pipeline = VK_NULL_HANDLE;
+  // }
 
-  vk_utils::GraphicsPipelineMaker maker;
+  // vk_utils::GraphicsPipelineMaker maker;
 
-  std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths;
-  shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = FRAGMENT_SHADER_PATH + ".spv";
-  shader_paths[VK_SHADER_STAGE_VERTEX_BIT]   = VERTEX_SHADER_PATH + ".spv";
+  // std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths;
+  // shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = FRAGMENT_SHADER_PATH + ".spv";
+  // shader_paths[VK_SHADER_STAGE_VERTEX_BIT]   = VERTEX_SHADER_PATH + ".spv";
 
-  maker.LoadShaders(m_device, shader_paths);
+  // maker.LoadShaders(m_device, shader_paths);
 
-  m_basicForwardPipeline.layout = maker.MakeLayout(m_device, {m_graphicsDescriptorSetLayout}, sizeof(graphicsPushConsts));
-  maker.SetDefaultState(m_width, m_height);
+  // m_basicForwardPipeline.layout = maker.MakeLayout(m_device, {m_graphicsDescriptorSetLayout}, sizeof(graphicsPushConsts));
+  // maker.SetDefaultState(m_width, m_height);
 
-  m_basicForwardPipeline.pipeline = maker.MakePipeline(m_device, m_pScnMgr->GetPipelineVertexInputStateCreateInfo(),
-    m_screenRenderPass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+  // m_basicForwardPipeline.pipeline = maker.MakePipeline(m_device, m_pScnMgr->GetPipelineVertexInputStateCreateInfo(),
+  //   m_screenRenderPass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
 }
 
 void SimpleRenderTexture::DrawFrame(float a_time, DrawMode a_mode)
@@ -145,8 +144,7 @@ void SimpleRenderTexture::ProcessInput(const AppInput &input)
 
     for (uint32_t i = 0; i < m_framesInFlight; ++i)
     {
-      BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
-        m_swapchain.GetAttachment(i).view, m_basicForwardPipeline);
+      BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i]);
     }
   }
 

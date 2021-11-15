@@ -6,8 +6,6 @@ else()
     include_directories(${GLFW_INCLUDE_DIRS})
 endif()
 
-add_definitions("-DUSE_VOLK")
-
 set(RENDER_SOURCE
         ../../render/scene_mgr.cpp
         ../../render/render_imgui.cpp

@@ -15,13 +15,33 @@
 #include <string>
 #include <iostream>
 
+
+struct GBufferLayer
+{
+  vk_utils::VulkanImageMem image{};
+};
+
+struct GBuffer
+{
+  std::vector<GBufferLayer> color_layers;
+  GBufferLayer depth_stencil_layer;
+  VkRenderPass renderpass{VK_NULL_HANDLE};
+};
+
+
 class SimpleRender : public IRender
 {
 public:
-  static constexpr char const* VERTEX_SHADER_PATH = "../resources/shaders/simple.vert";
+  static constexpr char const* DEFERRED_VERTEX_SHADER_PATH = "../resources/shaders/deferred.vert";
+  static constexpr char const* DEFERRED_FRAGMENT_SHADER_PATH = "../resources/shaders/deferred.frag";
+
+  static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting.vert";
+  static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting.geom";
+  static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting.frag";
+
   static constexpr char const* WIREFRAME_GEOMETRY_SHADER_PATH = "../resources/shaders/wireframe.geom";
-  static constexpr char const* FRAGMENT_SHADER_PATH = "../resources/shaders/simple.frag";
   static constexpr char const* WIREFRAME_FRAGMENT_SHADER_PATH = "../resources/shaders/wireframe.frag";
+
   static constexpr char const* CULLING_SHADER_PATH = "../resources/shaders/culling.comp";
 
   SimpleRender(uint32_t a_width, uint32_t a_height);
@@ -91,7 +111,8 @@ protected:
   
   struct
   {
-    LiteMath::float4x4 projView;
+    LiteMath::float4x4 proj;
+    LiteMath::float4x4 view;
   } graphicsPushConsts;
 
   struct
@@ -111,25 +132,31 @@ protected:
 
   VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
   
-  pipeline_data_t m_basicForwardPipeline {};
-  pipeline_data_t m_basicForwardWireframePipeline {};
+  pipeline_data_t m_deferredPipeline {};
+  pipeline_data_t m_lightingPipeline {};
+  pipeline_data_t m_deferredWireframePipeline {};
 
   pipeline_data_t m_cullingPipeline {};
 
   VkDescriptorSet m_graphicsDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_graphicsDescriptorSetLayout = VK_NULL_HANDLE;
-  VkRenderPass m_screenRenderPass = VK_NULL_HANDLE; // main renderpass
 
   VkDescriptorSet m_cullingDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_cullingDescriptorSetLayout = VK_NULL_HANDLE;
 
-  std::shared_ptr<vk_utils::DescriptorMaker> m_pBindings = nullptr;
+  VkDescriptorSet m_lightingDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_lightingDescriptorSetLayout = VK_NULL_HANDLE;
+
+  VkDescriptorSet m_lightingFragmentDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_lightingFragmentDescriptorSetLayout = VK_NULL_HANDLE;
+
+  std::unique_ptr<vk_utils::DescriptorMaker> m_pBindings = nullptr;
+  vk_utils::DescriptorMaker& GetDescMaker();
 
   // *** presentation
   VkSurfaceKHR m_surface = VK_NULL_HANDLE;
   VulkanSwapChain m_swapchain;
   std::vector<VkFramebuffer> m_frameBuffers;
-  vk_utils::VulkanImageMem m_depthBuffer{};
   // ***
 
   // *** GUI
@@ -154,6 +181,8 @@ protected:
 
   std::shared_ptr<SceneManager> m_pScnMgr;
 
+  GBuffer m_gbuffer;
+
   void ClearPipeline(pipeline_data_t& pipeline);
 
   void DrawFrameSimple();
@@ -161,10 +190,10 @@ protected:
   void CreateInstance();
   void CreateDevice(uint32_t a_deviceId);
 
-  void BuildCommandBufferSimple(VkCommandBuffer cmdBuff, VkFramebuffer frameBuff,
-                                VkImageView a_targetImageView, pipeline_data_t a_pipeline);
+  void BuildCommandBufferSimple(VkCommandBuffer cmdBuff, VkFramebuffer frameBuff);
 
-  virtual void SetupSimplePipeline();
+  virtual void SetupDeferredPipeline();
+  virtual void SetupLightingPipeline();
   virtual void SetupCullingPipeline();
   void CleanupPipelineAndSwapchain();
   void RecreateSwapChain();
@@ -177,6 +206,9 @@ protected:
   void SetupDeviceFeatures();
   void SetupDeviceExtensions();
   void SetupValidationLayers();
+
+  void ClearGBuffer();
+  void CreateGBuffer();
 };
 
 

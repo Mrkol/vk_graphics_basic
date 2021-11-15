@@ -255,16 +255,17 @@ namespace hydra_xml
     std::vector<LightInstance> result;
     result.reserve(256);
 
-    LightInstance inst;
     for(auto instNode = sceneNode.child(L"instance_light"); instNode != nullptr; instNode = instNode.next_sibling())
     {
       std::wstring nameStr = instNode.name();
       if(nameStr != L"instance_light")
         continue;
+      LightInstance inst;
       inst.instNode  = instNode;
       inst.instId    = instNode.attribute(L"id").as_uint();
       inst.lightId   = instNode.attribute(L"light_id").as_uint(); 
       inst.lightNode = lights[inst.lightId];
+      result.push_back(inst);
     }
     return result;
   }

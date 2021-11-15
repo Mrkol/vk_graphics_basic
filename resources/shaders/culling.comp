@@ -62,7 +62,7 @@ layout(std430, binding = 4) buffer model_infos_t
     ModelInfo modelInfos[];
 };
 
-// If there are more than 32K instances of a certain model, we are doomed
+// If there are more than 8K instances of a certain model, we are doomed
 shared uint ourMapping[8192];
 shared uint ourVisibleInstanceCount;
 shared uint ourMappingStart;
@@ -106,7 +106,7 @@ void main()
         for (uint j = 0; j < 8; ++j)
         {
             vec4 screenspacePt = params.mProjView * instanceMatrices[i] * vec4(BBOX[j], 1.0f);
-            screenspacePt /= screenspacePt.w;
+            screenspacePt /= abs(screenspacePt.w);
             // if of AABB's vertices are on one side of a certain line,
             // all of it is on that side of the line
             // (lines are left-right-top-bottom of the screen)

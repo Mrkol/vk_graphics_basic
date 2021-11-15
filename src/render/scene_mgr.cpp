@@ -22,7 +22,7 @@ VkTransformMatrixKHR transformMatrixFromFloat4x4(const LiteMath::float4x4 &m)
 
 SceneManager::SceneManager(VkDevice a_device, VkPhysicalDevice a_physDevice,
   uint32_t a_transferQId, uint32_t a_graphicsQId, bool debug) : m_device(a_device), m_physDevice(a_physDevice),
-                 m_transferQId(a_transferQId), m_graphicsQId(a_graphicsQId), m_debug(debug)
+                 m_transferQId(a_transferQId), m_graphicsQId(a_graphicsQId)
 {
   vkGetDeviceQueue(m_device, m_transferQId, 0, &m_transferQ);
   vkGetDeviceQueue(m_device, m_graphicsQId, 0, &m_graphicsQ);
@@ -59,6 +59,23 @@ bool SceneManager::LoadSceneXML(const std::string &scenePath, bool transpose)
   for(auto cam : hscene_main->Cameras())
   {
     m_sceneCameras.push_back(cam);
+  }
+
+  for (auto light : hscene_main->InstancesLights())
+  {
+    m_sceneLights.push_back(light);
+  }
+
+  // quick and dirty hacks
+  auto randS = [] () { return float(rand()) / float(RAND_MAX) * 2.f - 1.f; };
+  auto randU = [] () { return float(rand()) / float(RAND_MAX); };
+  for (std::size_t i = 0; i < 200; ++i)
+  {
+    m_sceneLights.emplace_back(hydra_xml::LightInstance{
+        0, 0,
+        {}, {},
+        LiteMath::translate4x4(float3{randS() * 100, randU() * 10, randS() * 100})
+      });
   }
 
   LoadGeoDataOnGPU();
@@ -202,6 +219,7 @@ void SceneManager::LoadGeoDataOnGPU()
   VkDeviceSize infoBufSize   = m_meshInfos.size() * sizeof(GpuMeshInfo);
   VkDeviceSize instanceInfoBufSize = m_instanceInfos.size() * sizeof(GpuInstanceInfo);
   VkDeviceSize instanceMatrixBufSize = m_instanceMatrices.size() * sizeof(LiteMath::float4x4);
+  VkDeviceSize lightsBufSize = m_sceneLights.size() * sizeof(GpuLight);
   
   m_geoVertBuf  = vk_utils::createBuffer(m_device, vertexBufSize,
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -213,21 +231,41 @@ void SceneManager::LoadGeoDataOnGPU()
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   m_instanceMatricesBuffer = vk_utils::createBuffer(m_device, instanceMatrixBufSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  m_lightsBuffer = vk_utils::createBuffer(m_device, lightsBufSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
   VkMemoryAllocateFlags allocFlags {};
 
   m_geoMemAlloc = vk_utils::allocateAndBindWithPadding(m_device, m_physDevice,
-      {m_geoVertBuf, m_geoIdxBuf, m_meshInfoBuf, m_instanceInfosBuffer, m_instanceMatricesBuffer}, allocFlags);
+      {m_geoVertBuf, m_geoIdxBuf, m_meshInfoBuf, m_instanceInfosBuffer, m_instanceMatricesBuffer, m_lightsBuffer},
+      allocFlags);
 
   std::vector<GpuMeshInfo> mesh_info_tmp;
+  mesh_info_tmp.reserve(m_meshInfos.size());
   for(std::size_t i = 0; i < m_meshInfos.size(); ++i)
   {
     const auto& info = m_meshInfos[i];
     const auto& aabb = m_meshBboxes[i];
-    mesh_info_tmp.emplace_back(info.m_indNum, info.m_indexOffset, info.m_vertexOffset,
-      LiteMath::float3(aabb.boxMin.x, aabb.boxMin.y, aabb.boxMin.z),
-      LiteMath::float3(aabb.boxMax.x, aabb.boxMax.y, aabb.boxMax.z));
+    mesh_info_tmp.emplace_back(GpuMeshInfo {
+        info.m_indNum, info.m_indexOffset, info.m_vertexOffset,
+        LiteMath::float3(aabb.boxMin.x, aabb.boxMin.y, aabb.boxMin.z),
+        LiteMath::float3(aabb.boxMax.x, aabb.boxMax.y, aabb.boxMax.z)
+      });
   }
+
+  // TODO: proper color and radius
+  auto randU = [] () { return float(rand()) / float(RAND_MAX); };
+  std::vector<GpuLight> lights_tmp;
+  lights_tmp.reserve(m_sceneLights.size());
+  for (auto light : m_sceneLights)
+  {
+    float4 pos = light.matrix.col(3);
+    lights_tmp.emplace_back(GpuLight{
+        LiteMath::float4(pos.x, pos.y, pos.z, 10 + randU() * 20),
+        LiteMath::float4(randU()/2 + .5f, randU()/2 + .5f, randU()/2 + .5f, 0.1)
+      });
+  }
+
 
   m_pCopyHelper->UpdateBuffer(m_geoVertBuf, 0,
       m_pMeshData->VertexData(), vertexBufSize);
@@ -243,6 +281,9 @@ void SceneManager::LoadGeoDataOnGPU()
 
   m_pCopyHelper->UpdateBuffer(m_instanceMatricesBuffer, 0,
       m_instanceMatrices.data(), m_instanceMatrices.size() * sizeof(m_instanceMatrices[0]));
+
+  m_pCopyHelper->UpdateBuffer(m_lightsBuffer, 0,
+      lights_tmp.data(), lights_tmp.size() * sizeof(lights_tmp[0]));
 }
 
 void SceneManager::DrawMarkedInstances()
@@ -280,6 +321,12 @@ void SceneManager::DestroyScene()
   {
     vkDestroyBuffer(m_device, m_instanceInfosBuffer, nullptr);
     m_instanceInfosBuffer = VK_NULL_HANDLE;
+  }
+
+  if(m_lightsBuffer != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_lightsBuffer, nullptr);
+    m_lightsBuffer = VK_NULL_HANDLE;
   }
 
   if(m_geoMemAlloc != VK_NULL_HANDLE)
