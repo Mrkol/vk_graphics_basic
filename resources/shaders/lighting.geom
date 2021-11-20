@@ -42,20 +42,22 @@ void gramSchmidt(vec3 A, vec3 B, vec3 C, out vec3 Ao, out vec3 Bo, out vec3 Co)
 
 void main()
 {
-    InstanceIndexOut = InstanceIndexIn[0];
-
     vec3 center = gl_in[0].gl_Position.xyz;
     float radius = gl_in[0].gl_Position.w;
 
     if (dot(center, center) < radius*radius)
     {
         gl_Position = vec4(-1, -1, 0.5, 1);
-        EmitVertex();
-        gl_Position = vec4(1, -1, 0.5, 1);
+        InstanceIndexOut = InstanceIndexIn[0];
         EmitVertex();
         gl_Position = vec4(-1, 1, 0.5, 1);
+        InstanceIndexOut = InstanceIndexIn[0];
+        EmitVertex();
+        gl_Position = vec4(1, -1, 0.5, 1);
+        InstanceIndexOut = InstanceIndexIn[0];
         EmitVertex();
         gl_Position = vec4(1, 1, 0.5, 1);
+        InstanceIndexOut = InstanceIndexIn[0];
         EmitVertex();
     }
     else
@@ -93,6 +95,7 @@ void main()
         for (uint i = 0; i < 4; ++i)
         {
             gl_Position = params.mProj * vec4(center + forward*radius + quad[i]*radius2, 1.0);
+            InstanceIndexOut = InstanceIndexIn[0];
             EmitVertex();
         }
     }

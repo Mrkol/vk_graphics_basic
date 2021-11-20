@@ -135,18 +135,18 @@ vk_utils::DescriptorMaker& SimpleRender::GetDescMaker()
 
 void SimpleRender::SetupDeferredPipeline()
 {
+  auto& bindings = GetDescMaker();
+
+  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
+  bindings.BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  bindings.BindBuffer(1, m_instanceMappingBuffer);
+  bindings.BindBuffer(2, m_pScnMgr->GetInstanceMatricesBuffer());
+  bindings.BindEnd(&m_graphicsDescriptorSet, &m_graphicsDescriptorSetLayout);
+  
+    
 
   auto make_deferred_pipeline = [this](const std::unordered_map<VkShaderStageFlagBits, std::string>& shader_paths)
     {
-      auto& bindings = GetDescMaker();
-
-      bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
-      bindings.BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-      bindings.BindBuffer(1, m_instanceMappingBuffer);
-      bindings.BindBuffer(2, m_pScnMgr->GetInstanceMatricesBuffer());
-      bindings.BindEnd(&m_graphicsDescriptorSet, &m_graphicsDescriptorSetLayout);
-
-      
       vk_utils::GraphicsPipelineMaker maker;
 
       maker.LoadShaders(m_device, shader_paths);
@@ -174,14 +174,12 @@ void SimpleRender::SetupDeferredPipeline()
       return result;
     };
   
-  ClearPipeline(m_deferredPipeline);
   m_deferredPipeline = make_deferred_pipeline(
     std::unordered_map<VkShaderStageFlagBits, std::string> {
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_FRAGMENT_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_VERTEX_SHADER_PATH} + ".spv"}
     });
-
-  ClearPipeline(m_deferredWireframePipeline);
+  
   m_deferredWireframePipeline = make_deferred_pipeline(
     std::unordered_map<VkShaderStageFlagBits, std::string> {
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv"},
@@ -192,26 +190,68 @@ void SimpleRender::SetupDeferredPipeline()
 
 void SimpleRender::SetupLightingPipeline()
 {
-  ClearPipeline(m_lightingPipeline);
-
   auto& bindings = GetDescMaker();
-
+  
   bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_VERTEX_BIT);
   bindings.BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
   bindings.BindBuffer(1, m_pScnMgr->GetLightsBuffer());
   bindings.BindEnd(&m_lightingDescriptorSet, &m_lightingDescriptorSetLayout);
 
-  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
-  bindings.BindImage(0, m_gbuffer.color_layers[0].image.view,
-    nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
-  bindings.BindImage(1, m_gbuffer.color_layers[1].image.view,
-    nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
-  bindings.BindImage(2, m_gbuffer.color_layers[2].image.view,
-    nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
-  bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
-    nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
-  bindings.BindEnd(&m_lightingFragmentDescriptorSet, &m_lightingFragmentDescriptorSetLayout);
 
+  if (m_lightingFragmentDescriptorSetLayout == nullptr)
+  {
+    bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+    bindings.BindImage(0, m_gbuffer.color_layers[0].image.view,
+      nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
+    bindings.BindImage(1, m_gbuffer.color_layers[1].image.view,
+      nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
+    bindings.BindImage(2, m_gbuffer.color_layers[2].image.view,
+      nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
+    bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
+      nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
+    bindings.BindEnd(&m_lightingFragmentDescriptorSet, &m_lightingFragmentDescriptorSetLayout);
+  }
+  else
+  {
+    std::array image_infos {
+      VkDescriptorImageInfo {
+        .sampler = nullptr,
+        .imageView = m_gbuffer.color_layers[0].image.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = nullptr,
+        .imageView = m_gbuffer.color_layers[1].image.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = nullptr,
+        .imageView = m_gbuffer.color_layers[2].image.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = nullptr,
+        .imageView = m_gbuffer.depth_stencil_layer.image.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+    };
+
+    std::array<VkWriteDescriptorSet, image_infos.size()> writes;
+
+    for (std::size_t i = 0; i < image_infos.size(); ++i)
+    {
+      writes[i] = VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_lightingFragmentDescriptorSet,
+        .dstBinding = static_cast<uint32_t>(i),
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+        .pImageInfo = image_infos.data() + i
+      };
+    }
+
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  }
   
   vk_utils::GraphicsPipelineMaker maker;
 
@@ -226,6 +266,7 @@ void SimpleRender::SetupLightingPipeline()
 
   maker.SetDefaultState(m_width, m_height);
 
+  maker.rasterizer.cullMode = VK_CULL_MODE_NONE;
   maker.depthStencilTest.depthTestEnable = false;
   
   maker.colorBlendAttachments = {VkPipelineColorBlendAttachmentState {
@@ -257,8 +298,6 @@ void SimpleRender::SetupLightingPipeline()
 
 void SimpleRender::SetupCullingPipeline()
 {
-  ClearPipeline(m_cullingPipeline);
-
   auto& bindings = GetDescMaker();
 
   bindings.BindBegin(VK_SHADER_STAGE_COMPUTE_BIT);
@@ -268,6 +307,7 @@ void SimpleRender::SetupCullingPipeline()
   bindings.BindBuffer(3, m_pScnMgr->GetInstanceMatricesBuffer());
   bindings.BindBuffer(4, m_pScnMgr->GetModelInfosBuffer());
   bindings.BindEnd(&m_cullingDescriptorSet, &m_cullingDescriptorSetLayout);
+
   
   vk_utils::ComputePipelineMaker maker;
   maker.LoadShader(m_device, std::string{CULLING_SHADER_PATH} + ".spv");
@@ -345,7 +385,7 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
       VkBufferMemoryBarrier {
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
         .buffer = m_instanceMappingBuffer,
         .offset = 0,
         .size = sizeof(uint)
@@ -506,13 +546,17 @@ void SimpleRender::RecreateSwapChain()
 {
   vkDeviceWaitIdle(m_device);
 
+  ClearPipeline(m_deferredPipeline);
+  ClearPipeline(m_deferredWireframePipeline);
   ClearPipeline(m_lightingPipeline);
+
   CleanupPipelineAndSwapchain();
   auto oldImagesNum = m_swapchain.GetImageCount();
   m_presentationResources.queue = m_swapchain.CreateSwapChain(m_physicalDevice, m_device, m_surface, m_width, m_height,
     oldImagesNum, m_vsync);
 
   CreateGBuffer();
+  SetupDeferredPipeline();
   SetupLightingPipeline();
 
   m_frameFences.resize(m_framesInFlight);
@@ -1001,23 +1045,32 @@ void SimpleRender::CreateGBuffer()
     attachmentDescs.fill(VkAttachmentDescription {
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
       });
 
+    // Color GBuffer layers
     for (std::size_t i = 0; i < layers.size(); ++i)
     {
       attachmentDescs[i].format = m_gbuffer.color_layers[i].image.format;
     }
 
-    attachmentDescs[layers.size()].format = m_gbuffer.depth_stencil_layer.image.format;
-    attachmentDescs[layers.size()].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    attachmentDescs.back().format = m_swapchain.GetFormat();
-    attachmentDescs.back().finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // Depth layer
+    {
+      auto& depth = attachmentDescs[layers.size()];
+      depth.format = m_gbuffer.depth_stencil_layer.image.format;
+      depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+    // Present image
+    {
+      auto& present = attachmentDescs[layers.size() + 1];
+      present.format = m_swapchain.GetFormat();
+      present.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      present.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
 
     std::array<VkAttachmentReference, layers.size()> gBufferColorRefs;
     for (std::size_t i = 0; i < layers.size(); ++i)
@@ -1062,29 +1115,25 @@ void SimpleRender::CreateGBuffer()
     std::array dependencies {
       VkSubpassDependency {
         .srcSubpass = VK_SUBPASS_EXTERNAL,
-        .dstSubpass = 0,
-        .srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        .dstSubpass = 1,
+        // Source is THE PRESENT SEMAPHORE BEING SIGNALED ON THIS PRECISE STAGE!!!!!
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        // Destination is swapchain image being filled with gbuffer resolution
         .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT,
-        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        // Semaphore waiting doesn't do any memory ops
+        .srcAccessMask = {},
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
         .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
       },
       VkSubpassDependency {
         .srcSubpass = 0,
         .dstSubpass = 1,
-        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        // Source is gbuffer being written
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        // Destination is reading gbuffer as input attachments in fragment shader
         .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
-      },
-      VkSubpassDependency {
-        .srcSubpass = 1,
-        .dstSubpass = VK_SUBPASS_EXTERNAL,
-        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT,
         .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
       }
     };
