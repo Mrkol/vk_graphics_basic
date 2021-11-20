@@ -228,7 +228,7 @@ void SimpleRender::SetupLightingPipeline()
 
   maker.depthStencilTest.depthTestEnable = false;
   
-  maker.colorBlendAttachment = VkPipelineColorBlendAttachmentState {
+  maker.colorBlendAttachments = {VkPipelineColorBlendAttachmentState {
     .blendEnable = true,
     .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
     .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
@@ -238,7 +238,7 @@ void SimpleRender::SetupLightingPipeline()
     .alphaBlendOp = VK_BLEND_OP_ADD,
     .colorWriteMask =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
-  };
+  }};
   
   VkPipelineVertexInputStateCreateInfo in_info {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
