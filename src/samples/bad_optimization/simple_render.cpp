@@ -612,7 +612,7 @@ void SimpleRender::UpdateView()
 void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
 {
   m_pScnMgr->LoadSceneXML(path, transpose_inst_matrices);
-  const int GRID_SIZE = 1;
+  const int GRID_SIZE = 3;
   const float GRID_SCALE = 5;
   for (int i = -GRID_SIZE; i <= GRID_SIZE; ++i) {
     for (int j = -GRID_SIZE; j <= GRID_SIZE; ++j) {
