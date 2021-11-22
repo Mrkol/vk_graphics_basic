@@ -18,8 +18,9 @@
 class SimpleRender : public IRender
 {
 public:
-  const std::string VERTEX_SHADER_PATH = "../src/samples/bad_optimization/shaders/simple.vert";
-  const std::string FRAGMENT_SHADER_PATH = "../src/samples/bad_optimization/shaders/simple.frag";
+  static constexpr char const* VERTEX_SHADER_PATH = "../src/samples/bad_optimization/shaders/simple.vert";
+  static constexpr char const* FRAGMENT_SHADER_PATH = "../src/samples/bad_optimization/shaders/simple.frag";
+  static constexpr char const* CULLING_SHADER_PATH = "../resources/shaders/culling.comp";
 
   SimpleRender(uint32_t a_width, uint32_t a_height);
   ~SimpleRender()  { Cleanup(); };
@@ -89,18 +90,34 @@ protected:
   struct
   {
     LiteMath::float4x4 projView;
-    LiteMath::float4x4 model;
   } pushConst2M;
+
+  struct
+  {
+    LiteMath::float4x4 projView;
+    uint32_t instanceCount;
+    uint32_t modelCount;
+  } cullingPushConsts;
 
   UniformParams m_uniforms {};
   VkBuffer m_ubo = VK_NULL_HANDLE;
   VkDeviceMemory m_uboAlloc = VK_NULL_HANDLE;
   void* m_uboMappedMem = nullptr;
+  
+  VkBuffer m_indirectDrawBuffer = VK_NULL_HANDLE;
+  VkBuffer m_instanceMappingBuffer = VK_NULL_HANDLE;
+
+  VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
 
   pipeline_data_t m_basicForwardPipeline {};
+  pipeline_data_t m_cullingPipeline {};
 
   VkDescriptorSet m_dSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_dSetLayout = VK_NULL_HANDLE;
+
+  VkDescriptorSet m_cullingDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_cullingDescriptorSetLayout = VK_NULL_HANDLE;
+
   VkRenderPass m_screenRenderPass = VK_NULL_HANDLE; // main renderpass
 
   std::shared_ptr<vk_utils::DescriptorMaker> m_pBindings = nullptr;
@@ -142,6 +159,7 @@ protected:
                                 VkImageView a_targetImageView, VkPipeline a_pipeline);
 
   virtual void SetupSimplePipeline();
+  void SetupCullingPipeline();
   void CleanupPipelineAndSwapchain();
   void RecreateSwapChain();
 
@@ -153,6 +171,8 @@ protected:
   void SetupDeviceFeatures();
   void SetupDeviceExtensions();
   void SetupValidationLayers();
+
+  vk_utils::DescriptorMaker& GetDescMaker();
 };
 
 

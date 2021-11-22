@@ -212,6 +212,12 @@ void SceneManager::UnmarkInstance(const uint32_t instId)
   m_instanceInfos[instId].renderMark = false;
 }
 
+void SceneManager::ReloadGPUData()
+{
+  FreeGPUResource();
+  LoadGeoDataOnGPU();
+}
+
 void SceneManager::LoadGeoDataOnGPU()
 {
   VkDeviceSize vertexBufSize = m_pMeshData->VertexDataSize();
@@ -286,13 +292,9 @@ void SceneManager::LoadGeoDataOnGPU()
       lights_tmp.data(), lights_tmp.size() * sizeof(lights_tmp[0]));
 }
 
-void SceneManager::DrawMarkedInstances()
+void SceneManager::FreeGPUResource()
 {
 
-}
-
-void SceneManager::DestroyScene()
-{
   if(m_geoVertBuf != VK_NULL_HANDLE)
   {
     vkDestroyBuffer(m_device, m_geoVertBuf, nullptr);
@@ -334,6 +336,11 @@ void SceneManager::DestroyScene()
     vkFreeMemory(m_device, m_geoMemAlloc, nullptr);
     m_geoMemAlloc = VK_NULL_HANDLE;
   }
+}
+
+void SceneManager::DestroyScene()
+{
+  FreeGPUResource();
 
   m_pCopyHelper = nullptr;
 

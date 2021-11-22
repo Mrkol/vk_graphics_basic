@@ -48,8 +48,6 @@ struct SceneManager
   void MarkInstance(uint32_t instId);
   void UnmarkInstance(uint32_t instId);
 
-  void DrawMarkedInstances();
-
   void DestroyScene();
 
   VkPipelineVertexInputStateCreateInfo GetPipelineVertexInputStateCreateInfo() { return m_pMeshData->VertexInputLayout();}
@@ -81,8 +79,11 @@ struct SceneManager
   LiteMath::float4x4 GetInstanceMatrix(uint32_t instId) const {assert(instId < m_instanceMatrices.size()); return m_instanceMatrices[instId];}
   LiteMath::Box4f GetSceneBbox() const {return sceneBbox;}
 
+  void ReloadGPUData();
+
 private:
   void LoadGeoDataOnGPU();
+  void FreeGPUResource();
 
   std::vector<MeshInfo> m_meshInfos = {};
   std::vector<LiteMath::Box4f> m_meshBboxes = {};
