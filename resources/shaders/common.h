@@ -26,6 +26,8 @@ struct UniformParams
   bool animateLightColor;
   float screenWidth;
   float screenHeight;
+  mat4  lightMatrix;
+  vec3  lightPos;
 };
 
 #endif //VK_GRAPHICS_BASIC_COMMON_H

@@ -12,7 +12,6 @@ layout (location = 0 ) in VS_OUT
   vec3 wNorm;
   vec3 wTangent;
   vec2 texCoord;
-  vec3 color;
 } surf;
 
 layout(binding = 0, set = 0) uniform AppData
@@ -21,6 +20,14 @@ layout(binding = 0, set = 0) uniform AppData
 };
 
 layout (binding = 1) uniform sampler2D shadowMap;
+
+
+float sq(float x) { return x*x; }
+
+const float innerCosAngle = cos(radians(10.5f));
+const float outerCosAngle = cos(radians(20.5f));
+const float innerRadius = 0.1f;
+const float outerRadius = 10.f;
 
 void main()
 {
@@ -31,12 +38,22 @@ void main()
   const bool  outOfView = (shadowTexCoord.x < 0.0001f || shadowTexCoord.x > 0.9999f || shadowTexCoord.y < 0.0091f || shadowTexCoord.y > 0.9999f);
   const float shadow    = ((posLightSpaceNDC.z < textureLod(shadowMap, shadowTexCoord, 0).x + 0.001f) || outOfView) ? 1.0f : 0.0f;
 
-  const vec4 dark_violet = vec4(0.59f, 0.0f, 0.82f, 1.0f);
-  const vec4 chartreuse  = vec4(0.5f, 1.0f, 0.0f, 1.0f);
+  vec4 lightColor1 = vec4(1.f);
 
-  vec4 lightColor1 = vec4(floor(surf.wNorm * 4) / 4, 1);
-   
+  vec3 spotlightDir = normalize((transpose(Params.lightMatrix) * vec4(0, 0, 1, 0)).xyz);
   vec3 lightDir   = normalize(Params.lightPos - surf.wPos);
-  vec4 lightColor = max(dot(surf.wNorm, lightDir), 0.0f) * lightColor1;
+
+  float distToLight = length(Params.lightPos - surf.wPos);
+  float cosAngle = dot(-lightDir, spotlightDir);
+
+  float attenuation = clamp((cosAngle - outerCosAngle)/(innerCosAngle - outerCosAngle), 0, 1);
+
+  // from realtime rendering
+  float lightSampleDist = mix(innerRadius, outerRadius, 0.05);
+  attenuation *=
+    lightSampleDist/max(innerRadius, distToLight)
+      * sq(max(1 - sq(distToLight / outerRadius), 0));
+
+  vec4 lightColor = max(dot(surf.wNorm, lightDir), 0.0f) * lightColor1 * attenuation;
   out_fragColor   = (lightColor*shadow + vec4(0.1f)) * vec4(Params.baseColor, 1.0f);
 }
