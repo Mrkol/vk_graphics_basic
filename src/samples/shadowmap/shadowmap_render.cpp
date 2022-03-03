@@ -59,7 +59,7 @@ void SimpleShadowmapRender::InitVulkan(const char** a_instanceExtensions, uint32
     VK_CHECK_RESULT(vkCreateFence(m_device, &fenceInfo, nullptr, &m_frameFences[i]));
   }
 
-  m_pScnMgr = std::make_shared<SceneManager>(m_device, m_physicalDevice, m_queueFamilyIDXs.transfer, m_queueFamilyIDXs.graphics, false);
+  m_pScnMgr = std::make_unique<SceneManager>(m_device, m_physicalDevice, m_queueFamilyIDXs.transfer, m_queueFamilyIDXs.graphics, false);
 }
 
 void SimpleShadowmapRender::InitPresentation(VkSurfaceKHR &a_surface)
@@ -89,14 +89,14 @@ void SimpleShadowmapRender::InitPresentation(VkSurfaceKHR &a_surface)
   
   // create full screen quad for debug purposes
   // 
-  m_pFSQuad = std::make_shared<vk_utils::QuadRenderer>(0,0, 512, 512);
+  m_pFSQuad = std::make_unique<vk_utils::QuadRenderer>(0,0, 512, 512);
   m_pFSQuad->Create(m_device, "../resources/shaders/quad3_vert.vert.spv", "../resources/shaders/quad.frag.spv", 
                     vk_utils::RenderTargetInfo2D{ VkExtent2D{ m_width, m_height }, m_swapchain.GetFormat(),                                        // this is debug full scree quad
                                                   VK_ATTACHMENT_LOAD_OP_LOAD, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR }); // seems we need LOAD_OP_LOAD if we want to draw quad to part of screen
 
   // create shadow map
   //
-  m_pShadowMap2 = std::make_shared<vk_utils::RenderTarget>(m_device, VkExtent2D{2048, 2048});
+  m_pShadowMap2 = std::make_unique<vk_utils::RenderTarget>(m_device, VkExtent2D{2048, 2048});
 
   vk_utils::AttachmentInfo infoDepth;
   infoDepth.format           = VK_FORMAT_D16_UNORM;
@@ -119,6 +119,7 @@ void SimpleShadowmapRender::InitPresentation(VkSurfaceKHR &a_surface)
   m_pShadowMap2->CreateViewAndBindMemory(m_memShadowMap, {0});
   m_pShadowMap2->CreateDefaultSampler();
   m_pShadowMap2->CreateDefaultRenderPass();
+  m_pGUIRender = std::make_unique<ImGuiRender>(m_instance, m_device, m_physicalDevice, m_queueFamilyIDXs.graphics, m_graphicsQueue, m_swapchain);
 }
 
 void SimpleShadowmapRender::CreateInstance()
@@ -160,7 +161,7 @@ void SimpleShadowmapRender::SetupSimplePipeline()
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     2}
   };
 
-  m_pBindings = std::make_shared<vk_utils::DescriptorMaker>(m_device, dtypes, 2);
+  m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device, dtypes, 2);
   
   auto shadowMap = m_pShadowMap2->m_attachments[m_shadowMapId];
 
@@ -426,6 +427,8 @@ void SimpleShadowmapRender::RecreateSwapChain()
   }
 
   m_cmdBuffersDrawMain = vk_utils::createCommandBuffers(m_device, m_commandPool, m_framesInFlight);
+
+  m_pGUIRender->OnSwapchainChanged(m_swapchain);
 }
 
 void SimpleShadowmapRender::Cleanup()
@@ -541,7 +544,24 @@ void SimpleShadowmapRender::LoadScene(const char* path, bool transpose_inst_matr
   UpdateView();
 }
 
-void SimpleShadowmapRender::DrawFrameSimple()
+void SimpleShadowmapRender::DrawGui()
+{
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+
+
+  ImGui::Begin("Settings");
+  {
+    ImGui::Text("Hi");
+  }
+  ImGui::End();
+
+  ImGui::Render();
+}
+
+
+void SimpleShadowmapRender::DrawFrameSimple(bool enableGUI)
 {
   vkWaitForFences(m_device, 1, &m_frameFences[m_presentationResources.currentFrame], VK_TRUE, UINT64_MAX);
   vkResetFences(m_device, 1, &m_frameFences[m_presentationResources.currentFrame]);
@@ -557,13 +577,22 @@ void SimpleShadowmapRender::DrawFrameSimple()
   BuildCommandBufferSimple(currentCmdBuf, m_frameBuffers[imageIdx], m_swapchain.GetAttachment(imageIdx).view,
                            m_basicForwardPipeline.pipeline);
 
+  std::vector<VkCommandBuffer> submitCommandBuffers{currentCmdBuf};
+
+  if (enableGUI)
+  {
+    ImDrawData* pDrawData = ImGui::GetDrawData();
+    submitCommandBuffers.emplace_back(m_pGUIRender->BuildGUIRenderCommand(imageIdx, pDrawData));
+  }
+
+
   VkSubmitInfo submitInfo = {};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submitInfo.waitSemaphoreCount = 1;
   submitInfo.pWaitSemaphores = waitSemaphores;
   submitInfo.pWaitDstStageMask = waitStages;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &currentCmdBuf;
+  submitInfo.commandBufferCount = static_cast<uint32_t>(submitCommandBuffers.size());
+  submitInfo.pCommandBuffers = submitCommandBuffers.data();
 
   VkSemaphore signalSemaphores[] = {m_presentationResources.renderingFinished};
   submitInfo.signalSemaphoreCount = 1;
@@ -594,13 +623,14 @@ void SimpleShadowmapRender::DrawFrame(float a_time, DrawMode a_mode)
   switch (a_mode)
   {
     case DrawMode::WITH_GUI:
-//      DrawFrameWithGUI();
-//      break;
+      DrawGui();
+      DrawFrameSimple(true);
+      break;
     case DrawMode::NO_GUI:
-      DrawFrameSimple();
+      DrawFrameSimple(false);
       break;
     default:
-      DrawFrameSimple();
+      DrawFrameSimple(false);
   }
 
 }

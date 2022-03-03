@@ -4,6 +4,7 @@
 #define VK_NO_PROTOTYPES
 #include "../../render/scene_mgr.h"
 #include "../../render/render_common.h"
+#include "../../render/render_gui.h"
 #include "../../../resources/shaders/common.h"
 #include <geom/vk_mesh.h>
 #include <vk_descriptor_sets.h>
@@ -104,7 +105,7 @@ private:
   VkDescriptorSetLayout m_dSetLayout = VK_NULL_HANDLE;
   VkRenderPass m_screenRenderPass = VK_NULL_HANDLE; // main renderpass
 
-  std::shared_ptr<vk_utils::DescriptorMaker> m_pBindings = nullptr;
+  std::unique_ptr<vk_utils::DescriptorMaker> m_pBindings = nullptr;
 
   VkSurfaceKHR m_surface = VK_NULL_HANDLE;
   VulkanSwapChain m_swapchain;
@@ -124,18 +125,20 @@ private:
   bool m_enableValidation;
   std::vector<const char*> m_validationLayers;
 
-  std::shared_ptr<SceneManager>     m_pScnMgr;
+  std::unique_ptr<SceneManager>     m_pScnMgr;
   
   // objects and data for shadow map
   //
-  std::shared_ptr<vk_utils::IQuad>               m_pFSQuad;
+  std::unique_ptr<vk_utils::IQuad>               m_pFSQuad;
   //std::shared_ptr<vk_utils::RenderableTexture2D> m_pShadowMap;
-  std::shared_ptr<vk_utils::RenderTarget>        m_pShadowMap2;
+  std::unique_ptr<vk_utils::RenderTarget>        m_pShadowMap2;
   uint32_t                                       m_shadowMapId = 0;
   
   VkDeviceMemory        m_memShadowMap = VK_NULL_HANDLE;
   VkDescriptorSet       m_quadDS; 
   VkDescriptorSetLayout m_quadDSLayout = nullptr;
+
+  std::unique_ptr<IRenderGUI> m_pGUIRender;
 
   struct InputControlMouseEtc
   {
@@ -165,7 +168,8 @@ private:
   
   } m_light;
  
-  void DrawFrameSimple();
+  void DrawGui();
+  void DrawFrameSimple(bool enableGUI);
 
   void CreateInstance();
   void CreateDevice(uint32_t a_deviceId);
