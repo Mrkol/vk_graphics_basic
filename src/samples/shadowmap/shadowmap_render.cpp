@@ -98,27 +98,58 @@ void SimpleShadowmapRender::InitPresentation(VkSurfaceKHR &a_surface)
   //
   m_pShadowMap2 = std::make_unique<vk_utils::RenderTarget>(m_device, VkExtent2D{2048, 2048});
 
-  vk_utils::AttachmentInfo infoDepth;
-  infoDepth.format           = VK_FORMAT_D16_UNORM;
-  infoDepth.usage            = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-  infoDepth.imageSampleCount = VK_SAMPLE_COUNT_1_BIT;
-  m_shadowMapId              = m_pShadowMap2->CreateAttachment(infoDepth);
-  auto memReq                = m_pShadowMap2->GetMemoryRequirements()[0]; // we know that we have only one texture
-  
-  // memory for all shadowmaps (well, if you have them more than 1 ...)
-  {
-    VkMemoryAllocateInfo allocateInfo = {};
-    allocateInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.pNext           = nullptr;
-    allocateInfo.allocationSize  = memReq.size;
-    allocateInfo.memoryTypeIndex = vk_utils::findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_physicalDevice);
+  m_shadowMapId = m_pShadowMap2->CreateAttachment(
+    vk_utils::AttachmentInfo {
+      .format           = VK_FORMAT_D16_UNORM,
+      .usage            = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+      .imageSampleCount = VK_SAMPLE_COUNT_1_BIT,
+    });
 
+  {
+    auto memReq = m_pShadowMap2->GetMemoryRequirements()[0];
+
+    VkMemoryAllocateInfo allocateInfo {
+      .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+      .pNext           = nullptr,
+      .allocationSize  = memReq.size,
+      .memoryTypeIndex = vk_utils::findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_physicalDevice),
+    };
     VK_CHECK_RESULT(vkAllocateMemory(m_device, &allocateInfo, NULL, &m_memShadowMap));
   }
 
   m_pShadowMap2->CreateViewAndBindMemory(m_memShadowMap, {0});
   m_pShadowMap2->CreateDefaultSampler();
   m_pShadowMap2->CreateDefaultRenderPass();
+
+
+
+  m_pVSM = std::make_unique<vk_utils::RenderTarget>(m_device, VkExtent2D{2048, 2048});
+
+  m_vsmId = m_pVSM->CreateAttachment(
+    vk_utils::AttachmentInfo {
+      .format           = VK_FORMAT_R16G16_SFLOAT,
+      .usage            = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+      .imageSampleCount = VK_SAMPLE_COUNT_1_BIT,
+    });
+  
+  {
+    auto memReq = m_pVSM->GetMemoryRequirements()[0];
+
+    VkMemoryAllocateInfo allocateInfo {
+      .sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+      .pNext           = nullptr,
+      .allocationSize  = memReq.size,
+      .memoryTypeIndex = vk_utils::findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_physicalDevice),
+    };
+
+    VK_CHECK_RESULT(vkAllocateMemory(m_device, &allocateInfo, NULL, &m_memVSM));
+  }
+
+  m_pVSM->CreateViewAndBindMemory(m_memVSM, {0});
+  m_pVSM->CreateDefaultSampler();
+  m_pVSM->CreateDefaultRenderPass();
+
+
   m_pGUIRender = std::make_unique<ImGuiRender>(m_instance, m_device, m_physicalDevice, m_queueFamilyIDXs.graphics, m_graphicsQueue, m_swapchain);
 }
 
@@ -158,7 +189,7 @@ void SimpleShadowmapRender::SetupSimplePipeline()
 {
   std::vector<std::pair<VkDescriptorType, uint32_t> > dtypes = {
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             1},
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     2}
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     3}
   };
 
   m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device, dtypes, 2);
@@ -168,6 +199,7 @@ void SimpleShadowmapRender::SetupSimplePipeline()
   m_pBindings->BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
   m_pBindings->BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
   m_pBindings->BindImage (1, shadowMap.view, m_pShadowMap2->m_sampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  m_pBindings->BindImage (2, m_pVSM->m_attachments[m_vsmId].view, m_pVSM->m_sampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   m_pBindings->BindEnd(&m_dSet, &m_dSetLayout);
 
   //m_pBindings->BindImage(0, m_GBufTarget->m_attachments[m_GBuf_idx[GBUF_ATTACHMENT::POS_Z]].view, m_GBufTarget->m_sampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
@@ -183,10 +215,11 @@ void SimpleShadowmapRender::SetupSimplePipeline()
     vkDestroyPipelineLayout(m_device, m_basicForwardPipeline.layout, nullptr);
     m_basicForwardPipeline.layout = VK_NULL_HANDLE;
   }
-  if(m_basicForwardPipeline.pipeline != VK_NULL_HANDLE)
+
+  if(m_vsmPipeline.pipeline != VK_NULL_HANDLE)
   {
-    vkDestroyPipeline(m_device, m_basicForwardPipeline.pipeline, nullptr);
-    m_basicForwardPipeline.pipeline = VK_NULL_HANDLE;
+    vkDestroyPipeline(m_device, m_vsmPipeline.pipeline, nullptr);
+    m_vsmPipeline.pipeline = VK_NULL_HANDLE;
   }
 
   if(m_shadowPipeline.pipeline != VK_NULL_HANDLE)
@@ -226,7 +259,22 @@ void SimpleShadowmapRender::SetupSimplePipeline()
 
   m_shadowPipeline.layout   = m_basicForwardPipeline.layout;
   m_shadowPipeline.pipeline = maker.MakePipeline(m_device, m_pScnMgr->GetPipelineVertexInputStateCreateInfo(), 
-                                                 m_pShadowMap2->m_renderPass);                                                       
+                                                 m_pShadowMap2->m_renderPass);
+
+  shader_paths.clear();
+  shader_paths[VK_SHADER_STAGE_VERTEX_BIT] = "../resources/shaders/shadow_blur.vert.spv";
+  shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = "../resources/shaders/shadow_blur.frag.spv";
+  maker.LoadShaders(m_device, shader_paths);
+
+  maker.viewport.width  = float(m_pVSM->m_resolution.width);
+  maker.viewport.height = float(m_pVSM->m_resolution.height);
+  maker.scissor.extent  = VkExtent2D{ uint32_t(m_pVSM->m_resolution.width), uint32_t(m_pVSM->m_resolution.height) };
+
+  m_vsmPipeline.layout = maker.MakeLayout(m_device, {m_quadDSLayout}, sizeof(uint32_t));
+  m_vsmPipeline.pipeline = maker.MakePipeline(m_device,
+    VkPipelineVertexInputStateCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    }, m_pVSM->m_renderPass);
 }
 
 void SimpleShadowmapRender::CreateUniformBuffer()
@@ -255,6 +303,7 @@ void SimpleShadowmapRender::UpdateUniformBuffer(float a_time)
   m_uniforms.lightMatrix = m_lightMatrix;
   m_uniforms.lightPos    = m_light.cam.pos; //LiteMath::float3(sinf(a_time), 1.0f, cosf(a_time));
   m_uniforms.time        = a_time;
+  m_uniforms.enableVsm   = m_VSM;
 
   m_uniforms.baseColor = LiteMath::float3(0.9f, 0.92f, 1.0f);
   memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
@@ -327,6 +376,28 @@ void SimpleShadowmapRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, 
   }
   vkCmdEndRenderPass(a_cmdBuff);
 
+  //// do vsm
+  //
+
+  if (m_VSM)
+  {
+    std::vector<VkClearValue> clears{{VkClearColorValue{{0.0f, 0.0f, 0.0f, 0.0f}}}};
+    VkRenderPassBeginInfo vsmRP = m_pVSM->GetRenderPassBeginInfo(0, clears);
+    vkCmdBeginRenderPass(a_cmdBuff, &vsmRP, VK_SUBPASS_CONTENTS_INLINE);
+    {
+      vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vsmPipeline.pipeline);
+      vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_vsmPipeline.layout, 0, 1, &m_quadDS, 0, nullptr);
+      
+      uint32_t radius = static_cast<uint32_t>(m_VSMBlurRadius);
+      vkCmdPushConstants(a_cmdBuff, m_vsmPipeline.layout,
+        VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT, 0,
+        sizeof(uint32_t), &radius);
+      vkCmdDrawIndexed(a_cmdBuff, 4, 1, 0, 0, 0);
+    }
+    vkCmdEndRenderPass(a_cmdBuff);
+  }
+
   //// draw final scene to screen
   //
   {
@@ -344,12 +415,12 @@ void SimpleShadowmapRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, 
     renderPassInfo.pClearValues    = &clearValues[0];
 
     vkCmdBeginRenderPass(a_cmdBuff, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    {
+      vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, a_pipeline);
+      vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_basicForwardPipeline.layout, 0, 1, &m_dSet, 0, VK_NULL_HANDLE);
 
-    vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, a_pipeline);
-    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_basicForwardPipeline.layout, 0, 1, &m_dSet, 0, VK_NULL_HANDLE);
-
-    DrawSceneCmd(a_cmdBuff, m_worldViewProj);
-
+      DrawSceneCmd(a_cmdBuff, m_worldViewProj);
+    }
     vkCmdEndRenderPass(a_cmdBuff);
   }
 
@@ -553,7 +624,8 @@ void SimpleShadowmapRender::DrawGui()
 
   ImGui::Begin("Settings");
   {
-    ImGui::Text("Hi");
+    ImGui::Checkbox("Variance shadow mapping", &m_VSM);
+    ImGui::SliderInt("Blur Radius", &m_VSMBlurRadius, 1, 10);
   }
   ImGui::End();
 

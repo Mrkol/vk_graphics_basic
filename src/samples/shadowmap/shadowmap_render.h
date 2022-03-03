@@ -99,6 +99,7 @@ private:
   void* m_uboMappedMem = nullptr;
 
   pipeline_data_t m_basicForwardPipeline {};
+  pipeline_data_t m_vsmPipeline {};
   pipeline_data_t m_shadowPipeline {};
 
   VkDescriptorSet m_dSet = VK_NULL_HANDLE;
@@ -117,6 +118,8 @@ private:
   uint32_t m_height = 1024u;
   uint32_t m_framesInFlight = 2u;
   bool m_vsync = false;
+  bool m_VSM = true;
+  int m_VSMBlurRadius = 3;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
   std::vector<const char*> m_deviceExtensions      = {};
@@ -133,8 +136,13 @@ private:
   //std::shared_ptr<vk_utils::RenderableTexture2D> m_pShadowMap;
   std::unique_ptr<vk_utils::RenderTarget>        m_pShadowMap2;
   uint32_t                                       m_shadowMapId = 0;
+
+  std::unique_ptr<vk_utils::RenderTarget>        m_pVSM;
+  uint32_t                                       m_vsmId = 0;
   
   VkDeviceMemory        m_memShadowMap = VK_NULL_HANDLE;
+  VkDeviceMemory        m_memVSM       = VK_NULL_HANDLE;
+
   VkDescriptorSet       m_quadDS; 
   VkDescriptorSetLayout m_quadDSLayout = nullptr;
 
