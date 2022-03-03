@@ -376,6 +376,7 @@ void SimpleShadowmapRender::CleanupPipelineAndSwapchain()
   {
     vkDestroyFence(m_device, m_frameFences[i], nullptr);
   }
+  m_frameFences.clear();
 
   vkDestroyImageView(m_device, m_depthBuffer.view, nullptr);
   vkDestroyImage(m_device, m_depthBuffer.image, nullptr);
@@ -384,10 +385,11 @@ void SimpleShadowmapRender::CleanupPipelineAndSwapchain()
   {
     vkDestroyFramebuffer(m_device, m_frameBuffers[i], nullptr);
   }
+  m_frameBuffers.clear();
 
   vkDestroyRenderPass(m_device, m_screenRenderPass, nullptr);
 
-  //m_swapchain.Cleanup();
+  m_swapchain.Cleanup();
 }
 
 void SimpleShadowmapRender::RecreateSwapChain()
@@ -398,6 +400,7 @@ void SimpleShadowmapRender::RecreateSwapChain()
   auto oldImgNum = m_swapchain.GetImageCount();
   m_presentationResources.queue = m_swapchain.CreateSwapChain(m_physicalDevice, m_device, m_surface, m_width, m_height,
          oldImgNum, m_vsync);
+  
   std::vector<VkFormat> depthFormats = {
       VK_FORMAT_D32_SFLOAT,
       VK_FORMAT_D32_SFLOAT_S8_UINT,
@@ -410,6 +413,8 @@ void SimpleShadowmapRender::RecreateSwapChain()
   m_screenRenderPass = vk_utils::createDefaultRenderPass(m_device, m_swapchain.GetFormat());
   m_depthBuffer      = vk_utils::createDepthTexture(m_device, m_physicalDevice, m_width, m_height, m_depthBuffer.format);
   m_frameBuffers     = vk_utils::createFrameBuffers(m_device, m_swapchain, m_screenRenderPass, m_depthBuffer.view);
+  
+  SetupSimplePipeline();
 
   m_frameFences.resize(m_framesInFlight);
   VkFenceCreateInfo fenceInfo = {};
@@ -421,12 +426,6 @@ void SimpleShadowmapRender::RecreateSwapChain()
   }
 
   m_cmdBuffersDrawMain = vk_utils::createCommandBuffers(m_device, m_commandPool, m_framesInFlight);
-  for (uint32_t i = 0; i < m_swapchain.GetImageCount(); ++i)
-  {
-    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
-                             m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
-  }
-
 }
 
 void SimpleShadowmapRender::Cleanup()
@@ -487,12 +486,6 @@ void SimpleShadowmapRender::ProcessInput(const AppInput &input)
 #endif
 
     SetupSimplePipeline();
-
-    for (uint32_t i = 0; i < m_framesInFlight; ++i)
-    {
-      BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
-                               m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
-    }
   }
 }
 
@@ -546,12 +539,6 @@ void SimpleShadowmapRender::LoadScene(const char* path, bool transpose_inst_matr
   m_cam.lookAt = float3(loadedCam.lookAt);
   m_cam.tdist  = loadedCam.farPlane;
   UpdateView();
-
-  for (uint32_t i = 0; i < m_framesInFlight; ++i)
-  {
-    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
-                             m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
-  }
 }
 
 void SimpleShadowmapRender::DrawFrameSimple()
