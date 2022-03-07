@@ -173,6 +173,7 @@ protected:
   bool m_wireframe = false;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
+  VkPhysicalDeviceDescriptorIndexingFeatures m_enabledDeviceDescriptorIndexingFeatures = {};
   std::vector<const char*> m_deviceExtensions      = {};
   std::vector<const char*> m_instanceExtensions    = {};
 

@@ -7,6 +7,7 @@
 #include "LiteMath.h"
 #include <vk_copy.h>
 
+#include "vk_images.h"
 #include "../loader_utils/hydraxml.h"
 #include "../resources/shaders/common.h"
 
@@ -23,6 +24,16 @@ struct GpuMeshInfo
   uint32_t vertexOffset;
   LiteMath::float3 AABB_min{};
   LiteMath::float3 AABB_max{};
+};
+
+struct Landscape
+{
+  vk_utils::VulkanImageMem heightmap{};
+};
+
+struct LandscapeGpuInfo
+{
+  LiteMath::float4x4 model;
 };
 
 struct GpuLight
@@ -42,6 +53,7 @@ struct SceneManager
 
   uint32_t AddMeshFromFile(const std::string& meshPath);
   uint32_t AddMeshFromData(cmesh::SimpleMesh &meshData);
+  void AddLandscape();
 
   uint32_t InstanceMesh(uint32_t meshId, const LiteMath::float4x4 &matrix, bool markForRender = true);
 
@@ -95,6 +107,10 @@ private:
   std::vector<hydra_xml::Camera> m_sceneCameras = {};
   std::vector<hydra_xml::LightInstance> m_sceneLights = {};
   LiteMath::Box4f sceneBbox;
+
+  std::vector<Landscape> m_landscapes;
+  std::vector<LandscapeGpuInfo> m_landscapeInfos;
+  VkBuffer m_landscapeGpuInfos = VK_NULL_HANDLE;
 
   uint32_t m_totalVertices = 0u;
   uint32_t m_totalIndices  = 0u;

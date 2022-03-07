@@ -1,5 +1,6 @@
 #include <map>
 #include <array>
+#include <random>
 #include "scene_mgr.h"
 #include "vk_utils.h"
 #include "vk_buffers.h"
@@ -185,6 +186,45 @@ uint32_t SceneManager::AddMeshFromData(cmesh::SimpleMesh &meshData)
   return (uint32_t)m_meshInfos.size() - 1;
 }
 
+void SceneManager::AddLandscape()
+{
+  constexpr std::size_t width = 128;
+  constexpr std::size_t height = 128;
+
+  static std::default_random_engine e;
+  static std::uniform_int_distribution<int32_t> distr(-10, 10);
+
+  std::vector<int32_t> heights(width*height, 0);
+
+  // Brown noise is the antiderivative of white noise, which is just uniform random
+  for (std::size_t i = 0; i < height; ++i)
+  {
+    for (std::size_t j = 0; j < width; ++j)
+    {
+      auto value = distr(e);
+
+      for (std::size_t i2 = 0; i2 < i; ++i2)
+      {
+        for (std::size_t j2 = 0; j2 < j; ++j2)
+        {
+          heights[i2*width + j2] += value;
+        }
+      }
+    }
+  }
+  
+  m_landscapes.emplace_back(
+    Landscape{
+      .heightmap = vk_utils::allocateColorTextureFromDataLDR(m_device, m_physDevice,
+        reinterpret_cast<const unsigned char*>(heights.data()), width, height,
+        1, VK_FORMAT_R32_SINT, m_pCopyHelper),
+    });
+
+  LiteMath::float4x4 mat;
+  mat.identity();
+  m_landscapeInfos.emplace_back(mat);
+}
+
 uint32_t SceneManager::InstanceMesh(const uint32_t meshId, const LiteMath::float4x4 &matrix, bool markForRender)
 {
   assert(meshId < m_meshInfos.size());
@@ -226,6 +266,7 @@ void SceneManager::LoadGeoDataOnGPU()
   VkDeviceSize instanceInfoBufSize = m_instanceInfos.size() * sizeof(GpuInstanceInfo);
   VkDeviceSize instanceMatrixBufSize = m_instanceMatrices.size() * sizeof(LiteMath::float4x4);
   VkDeviceSize lightsBufSize = m_sceneLights.size() * sizeof(GpuLight);
+  VkDeviceSize landscapeInfoBufSize = m_landscapeInfos.size() * sizeof(LandscapeGpuInfo);
   
   m_geoVertBuf  = vk_utils::createBuffer(m_device, vertexBufSize,
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -238,6 +279,8 @@ void SceneManager::LoadGeoDataOnGPU()
   m_instanceMatricesBuffer = vk_utils::createBuffer(m_device, instanceMatrixBufSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   m_lightsBuffer = vk_utils::createBuffer(m_device, lightsBufSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  m_landscapeGpuInfos = vk_utils::createBuffer(m_device, landscapeInfoBufSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
   VkMemoryAllocateFlags allocFlags {};
@@ -348,4 +391,9 @@ void SceneManager::DestroyScene()
   m_pMeshData = nullptr;
   m_instanceInfos.clear();
   m_instanceMatrices.clear();
+
+  for (auto& landscape : m_landscapes)
+  {
+    vk_utils::deleteImg(m_device, &landscape.heightmap);
+  }
 }

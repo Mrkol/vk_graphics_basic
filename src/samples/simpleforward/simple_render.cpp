@@ -20,25 +20,29 @@ void SimpleRender::SetupDeviceFeatures()
   m_enabledDeviceFeatures.multiDrawIndirect = true;
   m_enabledDeviceFeatures.drawIndirectFirstInstance = true;
   m_enabledDeviceFeatures.geometryShader = true;
+
+  m_enabledDeviceDescriptorIndexingFeatures.descriptorBindingPartiallyBound = true;
+  m_enabledDeviceDescriptorIndexingFeatures.runtimeDescriptorArray = true;
 }
 
 void SimpleRender::SetupDeviceExtensions()
 {
-  m_deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-  m_deviceExtensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
+  m_deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  m_deviceExtensions.emplace_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
+  m_deviceExtensions.emplace_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
 }
 
 void SimpleRender::SetupValidationLayers()
 {
-  m_validationLayers.push_back("VK_LAYER_KHRONOS_validation");
-  m_validationLayers.push_back("VK_LAYER_LUNARG_monitor");
+  m_validationLayers.emplace_back("VK_LAYER_KHRONOS_validation");
+  m_validationLayers.emplace_back("VK_LAYER_LUNARG_monitor");
 }
 
 void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_instanceExtensionsCount, uint32_t a_deviceId)
 {
   for(size_t i = 0; i < a_instanceExtensionsCount; ++i)
   {
-    m_instanceExtensions.push_back(a_instanceExtensions[i]);
+    m_instanceExtensions.emplace_back(a_instanceExtensions[i]);
   }
 
   SetupValidationLayers();
@@ -111,7 +115,8 @@ void SimpleRender::CreateDevice(uint32_t a_deviceId)
   SetupDeviceFeatures();
   m_device = vk_utils::createLogicalDevice(m_physicalDevice, m_validationLayers, m_deviceExtensions,
                                            m_enabledDeviceFeatures, m_queueFamilyIDXs,
-                                           VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT);
+                                           VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT,
+                                           &m_enabledDeviceDescriptorIndexingFeatures);
 
   vkGetDeviceQueue(m_device, m_queueFamilyIDXs.graphics, 0, &m_graphicsQueue);
   vkGetDeviceQueue(m_device, m_queueFamilyIDXs.transfer, 0, &m_transferQueue);
