@@ -35,6 +35,11 @@ public:
   static constexpr char const* DEFERRED_VERTEX_SHADER_PATH = "../resources/shaders/deferred.vert";
   static constexpr char const* DEFERRED_FRAGMENT_SHADER_PATH = "../resources/shaders/deferred.frag";
 
+  static constexpr char const* DEFERRED_LANDSCAPE_VERTEX_SHADER_PATH = "../resources/shaders/deferred_landscape.vert";
+  static constexpr char const* DEFERRED_LANDSCAPE_TESC_SHADER_PATH = "../resources/shaders/deferred_landscape.tesc";
+  static constexpr char const* DEFERRED_LANDSCAPE_TESE_SHADER_PATH = "../resources/shaders/deferred_landscape.tese";
+  static constexpr char const* DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH = "../resources/shaders/deferred_landscape.frag";
+
   static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting.vert";
   static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting.geom";
   static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting.frag";
@@ -131,8 +136,11 @@ protected:
   VkBuffer m_instanceMappingBuffer = VK_NULL_HANDLE;
 
   VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
+
+  VkSampler m_landscapeHeightmapSampler;
   
   pipeline_data_t m_deferredPipeline {};
+  pipeline_data_t m_deferredLandscapePipeline {};
   pipeline_data_t m_lightingPipeline {};
   pipeline_data_t m_deferredWireframePipeline {};
 
@@ -140,6 +148,9 @@ protected:
 
   VkDescriptorSet m_graphicsDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_graphicsDescriptorSetLayout = VK_NULL_HANDLE;
+
+  std::vector<VkDescriptorSet> m_landscapeDescriptorSets;
+  VkDescriptorSetLayout m_landscapeDescriptorSetLayout = VK_NULL_HANDLE;
 
   VkDescriptorSet m_cullingDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_cullingDescriptorSetLayout = VK_NULL_HANDLE;
@@ -160,7 +171,7 @@ protected:
   // ***
 
   // *** GUI
-  std::shared_ptr<IRenderGUI> m_pGUIRender;
+  std::unique_ptr<IRenderGUI> m_pGUIRender;
   virtual void SetupGUIElements();
   void DrawFrameWithGUI();
   //
@@ -180,7 +191,7 @@ protected:
   bool m_enableValidation;
   std::vector<const char*> m_validationLayers;
 
-  std::shared_ptr<SceneManager> m_pScnMgr;
+  std::unique_ptr<SceneManager> m_pScnMgr;
 
   GBuffer m_gbuffer;
 
@@ -193,7 +204,8 @@ protected:
 
   void BuildCommandBufferSimple(VkCommandBuffer cmdBuff, VkFramebuffer frameBuff);
 
-  virtual void SetupDeferredPipeline();
+  virtual void SetupStaticMeshPipeline();
+  virtual void SetupLandscapePipeline();
   virtual void SetupLightingPipeline();
   virtual void SetupCullingPipeline();
   void CleanupPipelineAndSwapchain();

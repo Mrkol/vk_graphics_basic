@@ -217,12 +217,16 @@ void SceneManager::AddLandscape()
     Landscape{
       .heightmap = vk_utils::allocateColorTextureFromDataLDR(m_device, m_physDevice,
         reinterpret_cast<const unsigned char*>(heights.data()), width, height,
-        1, VK_FORMAT_R32_SINT, m_pCopyHelper),
+        1, VK_FORMAT_R32_SFLOAT, m_pCopyHelper),
     });
 
   LiteMath::float4x4 mat;
   mat.identity();
-  m_landscapeInfos.emplace_back(mat);
+  m_landscapeInfos.emplace_back(LandscapeGpuInfo{
+    .model = mat,
+    .width = static_cast<uint32_t>(width),
+    .height = static_cast<uint32_t>(height),
+  });
 }
 
 uint32_t SceneManager::InstanceMesh(const uint32_t meshId, const LiteMath::float4x4 &matrix, bool markForRender)
@@ -281,12 +285,13 @@ void SceneManager::LoadGeoDataOnGPU()
   m_lightsBuffer = vk_utils::createBuffer(m_device, lightsBufSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   m_landscapeGpuInfos = vk_utils::createBuffer(m_device, landscapeInfoBufSize,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
   VkMemoryAllocateFlags allocFlags {};
 
   m_geoMemAlloc = vk_utils::allocateAndBindWithPadding(m_device, m_physDevice,
-      {m_geoVertBuf, m_geoIdxBuf, m_meshInfoBuf, m_instanceInfosBuffer, m_instanceMatricesBuffer, m_lightsBuffer},
+      {m_geoVertBuf, m_geoIdxBuf, m_meshInfoBuf, m_instanceInfosBuffer,
+        m_instanceMatricesBuffer, m_lightsBuffer, m_landscapeGpuInfos},
       allocFlags);
 
   std::vector<GpuMeshInfo> mesh_info_tmp;
@@ -296,7 +301,7 @@ void SceneManager::LoadGeoDataOnGPU()
     const auto& info = m_meshInfos[i];
     const auto& aabb = m_meshBboxes[i];
     mesh_info_tmp.emplace_back(GpuMeshInfo {
-        info.m_indNum, info.m_indexOffset, info.m_vertexOffset,
+        info.m_indNum, info.m_indexOffset, static_cast<uint32_t>(info.m_vertexOffset),
         LiteMath::float3(aabb.boxMin.x, aabb.boxMin.y, aabb.boxMin.z),
         LiteMath::float3(aabb.boxMax.x, aabb.boxMax.y, aabb.boxMax.z)
       });
@@ -333,6 +338,9 @@ void SceneManager::LoadGeoDataOnGPU()
 
   m_pCopyHelper->UpdateBuffer(m_lightsBuffer, 0,
       lights_tmp.data(), lights_tmp.size() * sizeof(lights_tmp[0]));
+
+  m_pCopyHelper->UpdateBuffer(m_landscapeGpuInfos, 0,
+      m_landscapeInfos.data(), m_landscapeInfos.size() * sizeof(m_landscapeInfos[0]));
 }
 
 void SceneManager::FreeGPUResource()
@@ -372,6 +380,12 @@ void SceneManager::FreeGPUResource()
   {
     vkDestroyBuffer(m_device, m_lightsBuffer, nullptr);
     m_lightsBuffer = VK_NULL_HANDLE;
+  }
+
+  if (m_landscapeGpuInfos != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_landscapeGpuInfos, nullptr);
+    m_landscapeGpuInfos = VK_NULL_HANDLE;
   }
 
   if(m_geoMemAlloc != VK_NULL_HANDLE)

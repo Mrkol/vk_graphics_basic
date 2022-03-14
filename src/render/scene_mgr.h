@@ -29,11 +29,15 @@ struct GpuMeshInfo
 struct Landscape
 {
   vk_utils::VulkanImageMem heightmap{};
+  VkDescriptorSet descset;
 };
 
 struct LandscapeGpuInfo
 {
   LiteMath::float4x4 model;
+  uint32_t width;
+  uint32_t height;
+  char padding[128 - sizeof(LiteMath::float4x4) - 2*sizeof(uint32_t)];
 };
 
 struct GpuLight
@@ -73,6 +77,18 @@ struct SceneManager
 
   VkBuffer GetLightsBuffer() const { return m_lightsBuffer; }
   uint32_t LightsNum() const { return (uint32_t) m_sceneLights.size(); }
+
+  std::vector<VkImageView> GetLandscapeHeightmaps() const
+  {
+    std::vector<VkImageView> result;
+    result.reserve(m_landscapes.size());
+    for (auto& landscape : m_landscapes)
+    {
+      result.emplace_back(landscape.heightmap.view);
+    }
+    return result;
+  }
+  VkBuffer GetLandscapeInfos() const { return m_landscapeGpuInfos; }
 
   // Debug stuff
   GpuInstanceInfo GetInstanceInfo(std::size_t i) const { return m_instanceInfos[i]; }
