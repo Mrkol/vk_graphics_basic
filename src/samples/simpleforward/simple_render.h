@@ -32,23 +32,23 @@ struct GBuffer
 class SimpleRender : public IRender
 {
 public:
-  static constexpr char const* DEFERRED_VERTEX_SHADER_PATH = "../resources/shaders/deferred.vert";
-  static constexpr char const* DEFERRED_FRAGMENT_SHADER_PATH = "../resources/shaders/deferred.frag";
+  static constexpr char const* DEFERRED_VERTEX_SHADER_PATH = "../resources/shaders/geometry/static_mesh.vert";
+  static constexpr char const* DEFERRED_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/static_mesh.frag";
 
-  static constexpr char const* DEFERRED_LANDSCAPE_VERTEX_SHADER_PATH = "../resources/shaders/deferred_landscape.vert";
-  static constexpr char const* DEFERRED_LANDSCAPE_TESC_SHADER_PATH = "../resources/shaders/deferred_landscape.tesc";
-  static constexpr char const* DEFERRED_LANDSCAPE_TESE_SHADER_PATH = "../resources/shaders/deferred_landscape.tese";
-  static constexpr char const* DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH = "../resources/shaders/deferred_landscape.frag";
+  static constexpr char const* DEFERRED_LANDSCAPE_VERTEX_SHADER_PATH = "../resources/shaders/geometry/landscape.vert";
+  static constexpr char const* DEFERRED_LANDSCAPE_TESC_SHADER_PATH = "../resources/shaders/geometry/landscape.tesc";
+  static constexpr char const* DEFERRED_LANDSCAPE_TESE_SHADER_PATH = "../resources/shaders/geometry/landscape.tese";
+  static constexpr char const* DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/landscape.frag";
 
-  static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting.vert";
-  static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting.geom";
-  static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting.frag";
-  static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting_global.frag";
+  static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting/lighting.vert";
+  static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting/lighting.geom";
+  static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting.frag";
+  static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting_global.frag";
 
   static constexpr char const* FULLSCREEN_QUAD3_VERTEX_SHADER_PATH = "../resources/shaders/quad3_vert.vert";
 
-  static constexpr char const* WIREFRAME_GEOMETRY_SHADER_PATH = "../resources/shaders/wireframe.geom";
-  static constexpr char const* WIREFRAME_FRAGMENT_SHADER_PATH = "../resources/shaders/wireframe.frag";
+  static constexpr char const* WIREFRAME_GEOMETRY_SHADER_PATH = "../resources/shaders/geometry/wireframe.geom";
+  static constexpr char const* WIREFRAME_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/wireframe.frag";
 
   static constexpr char const* CULLING_SHADER_PATH = "../resources/shaders/culling.comp";
 
@@ -186,7 +186,7 @@ protected:
   uint32_t m_framesInFlight  = 2u;
   bool m_vsync = false;
   bool m_wireframe = false;
-  float m_sunAngle = 0.f;
+  float m_sunAngle = 0.1f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
   VkPhysicalDeviceDescriptorIndexingFeatures m_enabledDeviceDescriptorIndexingFeatures = {};

@@ -3,7 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 
-#include "unpack_attributes.h"
+#include "../unpack_attributes.h"
 
 layout(push_constant) uniform params_t
 {

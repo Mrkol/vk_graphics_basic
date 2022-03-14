@@ -3,7 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 
-#include "unpack_attributes.h"
+#include "../unpack_attributes.h"
 
 
 layout(location = 0) in vec4 vPosNorm;
