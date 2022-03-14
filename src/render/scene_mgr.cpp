@@ -68,6 +68,7 @@ bool SceneManager::LoadSceneXML(const std::string &scenePath, bool transpose)
     m_sceneLights.push_back(light);
   }
 
+  /*
   // quick and dirty hacks
   auto randS = [] () { return float(rand()) / float(RAND_MAX) * 2.f - 1.f; };
   auto randU = [] () { return float(rand()) / float(RAND_MAX); };
@@ -79,6 +80,7 @@ bool SceneManager::LoadSceneXML(const std::string &scenePath, bool transpose)
         LiteMath::translate4x4(float3{randS() * 100, randU() * 10, randS() * 100})
       });
   }
+  */
 
   LoadGeoDataOnGPU();
   hscene_main = nullptr;
@@ -189,18 +191,20 @@ uint32_t SceneManager::AddMeshFromData(cmesh::SimpleMesh &meshData)
 
 void SceneManager::AddLandscape()
 {
-  constexpr std::size_t width = 256;
-  constexpr std::size_t height = 256;
-  constexpr float scale = 4;
+  constexpr std::size_t width = 1024;
+  constexpr std::size_t height = 1024;
+  constexpr std::array octaves{2.f, 10.f};
 
   std::vector<float> heights(width*height, 0);
-
-  // Brown noise is the antiderivative of white noise, which is just uniform random
+  
   for (std::size_t i = 0; i < height; ++i)
   {
     for (std::size_t j = 0; j < width; ++j)
     {
-      heights[i*width + j] = perlin(static_cast<float>(i)/height*scale, static_cast<float>(j)/width*scale)/scale;
+      for (auto o : octaves)
+      {
+        heights[i*width + j] += perlin(10*o + static_cast<float>(i)/height*o, 10*o + static_cast<float>(j)/width*o)/o;
+      }
     }
   }
   
@@ -211,12 +215,29 @@ void SceneManager::AddLandscape()
         1, VK_FORMAT_R32_SFLOAT, m_pCopyHelper),
     });
 
-  LiteMath::float4x4 mat = LiteMath::scale4x4(float3(100.f)) * LiteMath::translate4x4(float3(-0.5, -0.1, -0.5));
+  constexpr float scale = 200.f;
+
+  LiteMath::float4x4 mat = LiteMath::scale4x4(float3(scale)) * LiteMath::translate4x4(float3(-0.5f, -0.1f, -0.5f));
   m_landscapeInfos.emplace_back(LandscapeGpuInfo{
     .model = mat,
     .width = static_cast<uint32_t>(width),
     .height = static_cast<uint32_t>(height),
   });
+
+  
+  auto randU = [] () { return float(rand()) / float(RAND_MAX); };
+  for (std::size_t i = 0; i < 200; ++i)
+  {
+    float x = randU();
+    float y = randU();
+    float z = heights[static_cast<size_t>(x*static_cast<float>(width))*height + static_cast<size_t>(y*static_cast<float>(height))]
+      + randU() / scale;
+    m_sceneLights.emplace_back(hydra_xml::LightInstance{
+        0, 0,
+        {}, {},
+        mat * LiteMath::translate4x4(float3{x, z, y})
+      });
+  }
 }
 
 uint32_t SceneManager::InstanceMesh(const uint32_t meshId, const LiteMath::float4x4 &matrix, bool markForRender)
@@ -231,7 +252,7 @@ uint32_t SceneManager::InstanceMesh(const uint32_t meshId, const LiteMath::float
   info.renderMark    = markForRender;
   m_instanceInfos.push_back(info);
 
-  return m_instanceMatrices.size() - 1;
+  return static_cast<uint32_t>(m_instanceMatrices.size() - 1);
 }
 
 void SceneManager::MarkInstance(const uint32_t instId)
@@ -306,7 +327,7 @@ void SceneManager::LoadGeoDataOnGPU()
     float4 pos = light.matrix.col(3);
     lights_tmp.emplace_back(GpuLight{
         LiteMath::float4(pos.x, pos.y, pos.z, 10 + randU() * 20),
-        LiteMath::float4(randU()/2 + .5f, randU()/2 + .5f, randU()/2 + .5f, 0.1)
+        LiteMath::float4(randU()/2 + .5f, randU()/2 + .5f, randU()/2 + .5f, 0.1f)
       });
   }
 

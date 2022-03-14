@@ -52,7 +52,7 @@ void main()
     const vec3 lightDir = normalize(toLightVec);
 
     const vec3 diffuse = max(dot(normal, lightDir), 0.0f) * lightColor;
-    const vec3 ambient = vec3(0.1, 0.1, 0.1);
+    const vec3 ambient = vec3(0.2, 0.2, 0.2);
 
     out_fragColor = vec4((ambient + diffuse*shade) * albedo, 0.5f);
 }

@@ -43,7 +43,7 @@ float shade()
 
     // Performed in terrain's model space
     const vec3 start = vec3(surf.texCoord.x, textureLod(heightmap, surf.texCoord, 0).r, surf.texCoord.y);
-    const float h = 1.f/float(landscapeInfo.width + landscapeInfo.height);
+    const float h = 1.5f/float(landscapeInfo.width + landscapeInfo.height);
     const vec3 dir = normalize(mLightPos - start);
 
     float result = 0;
@@ -59,7 +59,7 @@ float shade()
             result += 1.f;
     }
 
-    const float minHits = 10;
+    const float minHits = 1.f/(h*30.f);
     return (minHits - min(result, minHits))/minHits;
 }
 

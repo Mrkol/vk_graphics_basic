@@ -186,7 +186,7 @@ protected:
   uint32_t m_framesInFlight  = 2u;
   bool m_vsync = false;
   bool m_wireframe = false;
-  float m_sunAngle = 0.1f;
+  float m_sunAngle = 0.5f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
   VkPhysicalDeviceDescriptorIndexingFeatures m_enabledDeviceDescriptorIndexingFeatures = {};
