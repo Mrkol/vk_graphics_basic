@@ -396,21 +396,27 @@ void SimpleRender::SetupLightingPipeline()
     .colorWriteMask =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
   }};
-  
-  VkPipelineVertexInputStateCreateInfo in_info {
+
+  VkPipelineVertexInputStateCreateInfo emptyVertexInput{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
     .vertexBindingDescriptionCount = 0,
-    .pVertexBindingDescriptions = nullptr,
     .vertexAttributeDescriptionCount = 0,
-    .pVertexAttributeDescriptions = nullptr,
   };
 
-  m_lightingPipeline.pipeline = maker.MakePipeline(m_device, in_info,
+  m_lightingPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput,
     m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_PList(), 1);
+
+  
+  maker.LoadShaders(m_device, std::unordered_map<VkShaderStageFlagBits, std::string> {
+      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"}
+    });
+  m_globalLightingPipeline.layout = maker.MakeLayout(m_device,
+    {m_lightingDescriptorSetLayout, m_lightingFragmentDescriptorSetLayout}, sizeof(graphicsPushConsts));
+  
+  m_globalLightingPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput,
+    m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_TList(), 1);
 }
-
-
-
 
 void SimpleRender::SetupCullingPipeline()
 {
@@ -476,8 +482,9 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
 {
 // most uniforms are updated in GUI -> SetupGUIElements()
   m_uniforms.time = a_time;
-  m_uniforms.screenWidth = m_width;
-  m_uniforms.screenHeight = m_height;
+  m_uniforms.screenWidth = static_cast<float>(m_width);
+  m_uniforms.screenHeight = static_cast<float>(m_height);
+  m_uniforms.lightPos = float3(0, std::sin(m_sunAngle), std::cos(m_sunAngle))*10000;
   memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
 }
 
@@ -612,6 +619,17 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
             sizeof(graphicsPushConsts), &graphicsPushConsts);
 
         vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
+
+        vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.pipeline);
+
+        for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
+        {
+          std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
+          vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
+              &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
+
+          vkCmdDrawIndexed(a_cmdBuff, 4, 1, 0, 0, 0);
+        }
       }
 
       vkCmdNextSubpass(a_cmdBuff, VK_SUBPASS_CONTENTS_INLINE);
@@ -629,6 +647,13 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
             sizeof(graphicsPushConsts), &graphicsPushConsts);
         
         vkCmdDraw(a_cmdBuff, 1, m_pScnMgr->LightsNum(), 0, 0);
+
+        
+        vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.pipeline);
+        vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.layout, 0,
+          static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
+
+        vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);        
       }
     }
     vkCmdEndRenderPass(a_cmdBuff);
@@ -666,6 +691,7 @@ void SimpleRender::RecreateSwapChain()
   ClearPipeline(m_deferredWireframePipeline);
   ClearPipeline(m_deferredLandscapePipeline);
   ClearPipeline(m_lightingPipeline);
+  ClearPipeline(m_globalLightingPipeline);
 
   CleanupPipelineAndSwapchain();
   auto oldImagesNum = m_swapchain.GetImageCount();
@@ -707,12 +733,8 @@ void SimpleRender::Cleanup()
     vkDestroySampler(m_device, m_landscapeHeightmapSampler, nullptr);
     m_landscapeHeightmapSampler = VK_NULL_HANDLE;
   }
-  
-  ClearPipeline(m_deferredPipeline);
-  ClearPipeline(m_deferredWireframePipeline);
-  ClearPipeline(m_deferredLandscapePipeline);
-  ClearPipeline(m_lightingPipeline);
-  ClearPipeline(m_cullingPipeline);
+
+  ClearAllPipelines();
 
   if (m_presentationResources.imageAvailable != VK_NULL_HANDLE)
   {
@@ -797,6 +819,8 @@ void SimpleRender::ProcessInput(const AppInput &input)
     std::system("cd ../resources/shaders && python3 compile_simple_render_shaders.py");
 #endif
 
+    ClearAllPipelines();
+    
     SetupStaticMeshPipeline();
     SetupLandscapePipeline();
     SetupLightingPipeline();
@@ -862,6 +886,16 @@ void SimpleRender::ClearPipeline(pipeline_data_t &pipeline)
     vkDestroyPipeline(m_device, pipeline.pipeline, nullptr);
     pipeline.pipeline = VK_NULL_HANDLE;
   }
+}
+
+void SimpleRender::ClearAllPipelines()
+{
+  ClearPipeline(m_deferredPipeline);
+  ClearPipeline(m_deferredWireframePipeline);
+  ClearPipeline(m_deferredLandscapePipeline);
+  ClearPipeline(m_lightingPipeline);
+  ClearPipeline(m_globalLightingPipeline);
+  ClearPipeline(m_cullingPipeline);
 }
 
 void SimpleRender::DrawFrameSimple()
@@ -940,6 +974,7 @@ void SimpleRender::SetupGUIElements()
     ImGui::Begin("Simple render settings");
 
     ImGui::Checkbox("Wireframe", &m_wireframe);
+    ImGui::SliderAngle("Sun", &m_sunAngle);
 
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 

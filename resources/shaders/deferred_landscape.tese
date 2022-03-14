@@ -23,26 +23,31 @@ layout(quads, equal_spacing, cw) in;
 
 layout (location = 0) out VS_OUT
 {
-    vec3 sNorm;
-    vec3 sTangent;
+    vec3 cNorm;
+    vec3 cTangent;
     vec2 texCoord;
 } vOut;
 
 vec3 calcNormal(vec2 pos)
 {
     const vec2 dx = vec2(1.f/float(landscapeInfo.width), 0);
-    const vec2 dy = vec2(1.f/float(landscapeInfo.height), 0);
-    const float l = textureLod(heightmap, pos + dx, 0).r;
-    const float r = textureLod(heightmap, pos - dx, 0).r;
+    const vec2 dy = vec2(0, 1.f/float(landscapeInfo.height));
+    const float r = textureLod(heightmap, pos + dx, 0).r;
+    const float l = textureLod(heightmap, pos - dx, 0).r;
     const float u = textureLod(heightmap, pos + dy, 0).r;
     const float d = textureLod(heightmap, pos - dy, 0).r;
 
-    return vec3(r - l, u - d, -2.f) / 2.f;   
+    return vec3(r - l, 0.01f, d - u) / 2.f;
+}
+
+vec3 calcPos(vec2 pos)
+{
+    return vec3(pos.x, textureLod(heightmap, pos, 0).r, pos.y);
 }
 
 void main()
 {
-    const vec3 mPos = vec3(gl_TessCoord.xy, textureLod(heightmap, gl_TessCoord.xy, 0).r);
+    const vec3 mPos = calcPos(gl_TessCoord.xy);
     const vec3 mNorm = calcNormal(gl_TessCoord.xy);
     const vec3 mTang = vec3(0);
 
@@ -50,8 +55,9 @@ void main()
 
     mat4 normalModelView = transpose(inverse(modelView));
 
-    gl_Position   = params.mProj * modelView * vec4(mPos, 1);
-    vOut.sNorm    = mat3(normalModelView) * mNorm;
-    vOut.sTangent = mat3(normalModelView) * mTang;
+    vOut.cNorm    = normalize(mat3(normalModelView) * mNorm);
+    vOut.cTangent = mat3(normalModelView) * mTang;
     vOut.texCoord = gl_TessCoord.xy;
+    
+    gl_Position   = params.mProj * modelView * vec4(mPos, 1);
 }

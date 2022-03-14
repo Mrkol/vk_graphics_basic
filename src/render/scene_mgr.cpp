@@ -5,6 +5,7 @@
 #include "vk_utils.h"
 #include "vk_buffers.h"
 #include "../loader_utils/hydraxml.h"
+#include "perlin.h"
 
 
 VkTransformMatrixKHR transformMatrixFromFloat4x4(const LiteMath::float4x4 &m)
@@ -188,28 +189,18 @@ uint32_t SceneManager::AddMeshFromData(cmesh::SimpleMesh &meshData)
 
 void SceneManager::AddLandscape()
 {
-  constexpr std::size_t width = 128;
-  constexpr std::size_t height = 128;
+  constexpr std::size_t width = 256;
+  constexpr std::size_t height = 256;
+  constexpr float scale = 4;
 
-  static std::default_random_engine e;
-  static std::uniform_int_distribution<int32_t> distr(-10, 10);
-
-  std::vector<int32_t> heights(width*height, 0);
+  std::vector<float> heights(width*height, 0);
 
   // Brown noise is the antiderivative of white noise, which is just uniform random
   for (std::size_t i = 0; i < height; ++i)
   {
     for (std::size_t j = 0; j < width; ++j)
     {
-      auto value = distr(e);
-
-      for (std::size_t i2 = 0; i2 < i; ++i2)
-      {
-        for (std::size_t j2 = 0; j2 < j; ++j2)
-        {
-          heights[i2*width + j2] += value;
-        }
-      }
+      heights[i*width + j] = perlin(static_cast<float>(i)/height*scale, static_cast<float>(j)/width*scale)/scale;
     }
   }
   
@@ -220,8 +211,7 @@ void SceneManager::AddLandscape()
         1, VK_FORMAT_R32_SFLOAT, m_pCopyHelper),
     });
 
-  LiteMath::float4x4 mat;
-  mat.identity();
+  LiteMath::float4x4 mat = LiteMath::scale4x4(float3(100.f)) * LiteMath::translate4x4(float3(-0.5, -0.1, -0.5));
   m_landscapeInfos.emplace_back(LandscapeGpuInfo{
     .model = mat,
     .width = static_cast<uint32_t>(width),

@@ -42,7 +42,7 @@ int main()
 
   initVulkanGLFW(app, window, VULKAN_DEVICE_ID);
 
-  app->LoadScene("../external/scenes/01_simple_scenes/instanced_objects.xml", false);
+  app->LoadScene("../external/scenes/01_simple_scenes/bunny_cornell.xml", false);
 
   bool showGUI = true;
   mainLoop(app, window, showGUI);

@@ -43,6 +43,9 @@ public:
   static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting.vert";
   static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting.geom";
   static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting.frag";
+  static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting_global.frag";
+
+  static constexpr char const* FULLSCREEN_QUAD3_VERTEX_SHADER_PATH = "../resources/shaders/quad3_vert.vert";
 
   static constexpr char const* WIREFRAME_GEOMETRY_SHADER_PATH = "../resources/shaders/wireframe.geom";
   static constexpr char const* WIREFRAME_FRAGMENT_SHADER_PATH = "../resources/shaders/wireframe.frag";
@@ -142,6 +145,7 @@ protected:
   pipeline_data_t m_deferredPipeline {};
   pipeline_data_t m_deferredLandscapePipeline {};
   pipeline_data_t m_lightingPipeline {};
+  pipeline_data_t m_globalLightingPipeline {};
   pipeline_data_t m_deferredWireframePipeline {};
 
   pipeline_data_t m_cullingPipeline {};
@@ -182,6 +186,7 @@ protected:
   uint32_t m_framesInFlight  = 2u;
   bool m_vsync = false;
   bool m_wireframe = false;
+  float m_sunAngle = 0.f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
   VkPhysicalDeviceDescriptorIndexingFeatures m_enabledDeviceDescriptorIndexingFeatures = {};
@@ -196,6 +201,7 @@ protected:
   GBuffer m_gbuffer;
 
   void ClearPipeline(pipeline_data_t& pipeline);
+  void ClearAllPipelines();
 
   void DrawFrameSimple();
 
