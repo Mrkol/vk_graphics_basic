@@ -139,11 +139,12 @@ vk_utils::DescriptorMaker& SimpleRender::GetDescMaker()
   if(m_pBindings == nullptr)
   {
     std::vector<std::pair<VkDescriptorType, uint32_t> > dtypes = {
-      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5},
       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
-      {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 4}
+      {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 4},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}
     };
-    m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device, dtypes, 4);
+    m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device, dtypes, 4 + /*max terrains*/ 10);
   }
 
   return *m_pBindings;
