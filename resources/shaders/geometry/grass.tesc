@@ -5,6 +5,8 @@
 
 
 layout(vertices = 3) out;
+layout(location = 0) out float rigidity[];
+
 
 void main()
 {
@@ -20,4 +22,6 @@ void main()
     }
 
     gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+    // Rigidity decreases with the grass blade's height
+    rigidity[gl_InvocationID] = gl_InvocationID < 2 ? 1 : 0;
 }

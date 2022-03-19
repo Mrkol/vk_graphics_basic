@@ -11,6 +11,7 @@ layout(push_constant) uniform params_t
 } params;
 
 layout(triangles, equal_spacing, cw) in;
+layout(location = 0) in float rigidity[];
 
 layout (location = 0) out VS_OUT
 {
@@ -21,5 +22,10 @@ layout (location = 0) out VS_OUT
 
 void main()
 {
-    gl_Position = params.mProj * vec4(gl_TessCoord, 1);
+    const float windStrength = 0.1;
+    const vec3 windDirection = normalize(vec3(1, 0, 1));
+    const vec3 displacement = (1 - rigidity[gl_InvocationID])
+        * windStrength * windDirection * cos(Params.time);
+    
+    gl_Position = params.mProj * vec4(gl_TessCoord + displacement, 1);
 }
