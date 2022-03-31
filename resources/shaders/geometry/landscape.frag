@@ -30,6 +30,10 @@ layout(binding = 2, set = 0) uniform LandscapeInfo
     mat4 modelMat;
     uint width;
     uint height;
+    // In heightmap pixels
+    uint tileSize;
+    // Amount of grass blades per tile
+    uint grassDensity;
 } landscapeInfo;
 
 layout (location = 0) out vec4 outNormal;

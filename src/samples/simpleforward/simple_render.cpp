@@ -218,6 +218,7 @@ void SimpleRender::SetupLandscapePipeline()
     bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     bindings.BindImage(1, textures[i], m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     bindings.BindBuffer(2, m_pScnMgr->GetLandscapeInfos(), nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+    bindings.BindBuffer(3, m_landscapeTileBuffers[i], nullptr, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     bindings.BindEnd(&m_landscapeDescriptorSets.emplace_back(), &m_landscapeDescriptorSetLayout);
   }
 
@@ -443,7 +444,7 @@ void SimpleRender::SetupCullingPipeline()
   for (size_t i = 0; i < minMaxHeights.size(); ++i)
   {
     bindings.BindBegin(VK_SHADER_STAGE_COMPUTE_BIT);
-    bindings.BindBuffer(0, m_landscapeIndirectDrawBuffer, nullptr,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC);
+    bindings.BindBuffer(0, m_landscapeIndirectDrawBuffer, nullptr, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC);
     bindings.BindBuffer(1, minMaxHeights[i]);
     bindings.BindBuffer(2, m_pScnMgr->GetLandscapeInfos(), nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
     bindings.BindBuffer(3, m_landscapeTileBuffers[i], nullptr, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
@@ -505,7 +506,7 @@ void SimpleRender::CreateUniformBuffer()
   for (auto tiles : m_pScnMgr->LandscapeTileCounts())
   {
     allBuffers.emplace_back(m_landscapeTileBuffers.emplace_back(vk_utils::createBuffer(m_device,
-      tiles * sizeof(uint32_t),
+      (1 + tiles) * sizeof(uint32_t),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)));
   }
 
@@ -671,7 +672,8 @@ void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff)
 
     vkCmdPipelineBarrier(a_cmdBuff,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT,
+        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT
+          | VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT,
         {},
         0, nullptr,
         bufferMemBarriers.size(), bufferMemBarriers.data(),
@@ -762,7 +764,7 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, VkFramebu
           vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
               &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
 
-          vkCmdDraw(a_cmdBuff, 4, 1, 0, 0);
+          vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, 0, 1, 0);
         }
       }
 
@@ -1043,6 +1045,7 @@ void SimpleRender::ClearAllPipelines()
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
   ClearPipeline(m_cullingPipeline);
+  ClearPipeline(m_landscapeCullingPipeline);
 }
 
 void SimpleRender::DrawFrameSimple()

@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_debug_printf : enable
 
+
 #define GROUP_SIZE 16
 
 layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
@@ -53,7 +54,7 @@ layout(std430, binding = 3) buffer tiles_t
     uint tiles[];
 };
 
-#define MAX_TILES 256
+#define MAX_TILES 8192
 shared uint ourVisibleTiles[MAX_TILES];
 shared uint ourVisibleTileCount;
 shared uint ourTilesStart;
@@ -82,7 +83,10 @@ void main()
     const uvec2 totalTiles =
         uvec2(landscapeInfo.width, landscapeInfo.height)
             / landscapeInfo.tileSize;
-    const uvec2 TilesPerThread = uvec2(vec2(totalTiles) * mTileGroupSize);
+    const uvec2 tilesPerThread = uvec2(vec2(totalTiles) * mTileGroupSize);
+    const vec2 mTileSize = 1.f/vec2(totalTiles);
+
+    const uvec2 tileGroupPos = gl_GlobalInvocationID.xy * tilesPerThread;
 
     // 0   tileGroup  cell             1
     // V_______V_______V_______________V
@@ -103,14 +107,14 @@ void main()
     // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
     // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
 
-    for (uint x = 0; x < TilesPerThread.x; ++x)
+    for (uint x = 0; x < tilesPerThread.x; ++x)
     {
-        for (uint y = 0; y < TilesPerThread.y; ++y)
+        for (uint y = 0; y < tilesPerThread.y; ++y)
         {
-            const vec2 mTilePos = mTileGroupPos + vec2(x,y) * mTileGroupSize;
-            const vec2 mTileEnd = mTileGroupPos + vec2(x+1,y+1) * mTileGroupSize;
+            const vec2 mTilePos = mTileGroupPos + vec2(x,y) * mTileSize;
+            const vec2 mTileEnd = mTileGroupPos + vec2(x+1,y+1) * mTileSize;
 
-            const uvec2 tileIdx2 = uvec2(mTilePos*vec2(totalTiles));
+            const uvec2 tileIdx2 = tileGroupPos + uvec2(x, y);
             const uint tileIdx = tileIdx2.y * totalTiles.x + tileIdx2.x;
 
             const vec2 tileMinMaxHeight = tileVerticalDims[tileIdx];
@@ -193,6 +197,7 @@ void main()
         tiles[1 + myTilesStart + i] = tile;
     }
     
+    // TODO: this is shit, won't work with >1 workgroup
     if (gl_GlobalInvocationID.x == 0
         && gl_GlobalInvocationID.y == 0)
     {

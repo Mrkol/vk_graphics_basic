@@ -194,9 +194,9 @@ uint32_t SceneManager::AddMeshFromData(cmesh::SimpleMesh &meshData)
 
 void SceneManager::AddLandscape()
 {
-  constexpr std::size_t width = 256;
-  constexpr std::size_t height = 256;
-  constexpr std::size_t tileSize = 16;
+  constexpr std::size_t width = 1024;
+  constexpr std::size_t height = 1024;
+  constexpr std::size_t tileSize = 32;
   constexpr std::size_t grassDensity = 256;
   constexpr std::array octaves{2.f, 10.f};
 
@@ -244,7 +244,7 @@ void SceneManager::AddLandscape()
   m_pCopyHelper->UpdateBuffer(landscape.tileMinMaxHeights, 0,
     tileHeights.data(), tileHeights.size() * sizeof(tileHeights[0]));
 
-  constexpr float scale = 100.f;
+  constexpr float scale = 400.f;
 
   LiteMath::float4x4 mat =
     LiteMath::scale4x4(float3(scale))
