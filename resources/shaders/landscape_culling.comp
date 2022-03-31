@@ -1,0 +1,213 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_debug_printf : enable
+
+#define GROUP_SIZE 16
+
+layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;
+
+ 
+layout(push_constant) uniform params_t
+{
+    mat4 mProjView;
+} params;
+
+struct IndirectCall
+{
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+};
+
+// Output: two inderect call structures, one for tile-based terrain rendering,
+// other for grass/bushes rendering with the appropriate density
+layout(std430, binding = 0) buffer indirection_t
+{
+    IndirectCall landscapeIndirection;
+    IndirectCall grassInderection;
+};
+
+// (minY, maxY) for each tile, tiled linearly
+layout(std430, binding = 1) buffer tileVerticalDims_t
+{
+    vec2 tileVerticalDims[];
+};
+
+layout(binding = 2) uniform LandscapeInfo
+{
+    mat4 modelMat;
+    // Heightmap's dimensions
+    uint width;
+    uint height;
+    // In heightmap pixels
+    uint tileSize;
+    // Amount of grass blades per tile
+    uint grassDensity;
+} landscapeInfo;
+
+// Output: tile IDs tiled linearly. First element is the size.
+layout(std430, binding = 3) buffer tiles_t
+{
+    uint tiles[];
+};
+
+#define MAX_TILES 256
+shared uint ourVisibleTiles[MAX_TILES];
+shared uint ourVisibleTileCount;
+shared uint ourTilesStart;
+
+void main()
+{
+    bool leader = gl_LocalInvocationID.xy == uvec2(0);
+    
+    if (leader) { ourVisibleTileCount = 0; }
+
+    barrier();
+    
+    const mat4 MVP = params.mProjView * landscapeInfo.modelMat;
+
+    // A cell is a group of tiles assigned to this workgroup
+    const vec2 mCellSize = vec2(1) / vec2(gl_NumWorkGroups.xy);
+    const vec2 mCellPos = vec2(gl_WorkGroupID.xy) * mCellSize;
+
+    // A tile group are tiles assigned to this thread
+    const vec2 mTileGroupSize =
+        mCellSize * vec2(1) / vec2(gl_WorkGroupSize.xy); 
+    const vec2 mTileGroupPos =
+        mCellPos + vec2(gl_LocalInvocationID.xy) * mTileGroupSize;
+
+
+    const uvec2 totalTiles =
+        uvec2(landscapeInfo.width, landscapeInfo.height)
+            / landscapeInfo.tileSize;
+    const uvec2 TilesPerThread = uvec2(vec2(totalTiles) * mTileGroupSize);
+
+    // 0   tileGroup  cell             1
+    // V_______V_______V_______________V
+    // |_|_|_|_l_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_l_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_l_|_|_|_\_|_|_|_|_|_|_|_|
+    // |,|,|,|,l,|,|,|,\_|_|_|_|_|_|_|_|
+    // |_|_|_|_l_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_l_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_l_|_|_|_\_|_|_|_|_|_|_|_|
+    // |.|.|.|.|.|.|.|.\.|.|.|.|.|.|.|.|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+    // |_|_|_|_|_|_|_|_\_|_|_|_|_|_|_|_|
+
+    for (uint x = 0; x < TilesPerThread.x; ++x)
+    {
+        for (uint y = 0; y < TilesPerThread.y; ++y)
+        {
+            const vec2 mTilePos = mTileGroupPos + vec2(x,y) * mTileGroupSize;
+            const vec2 mTileEnd = mTileGroupPos + vec2(x+1,y+1) * mTileGroupSize;
+
+            const uvec2 tileIdx2 = uvec2(mTilePos*vec2(totalTiles));
+            const uint tileIdx = tileIdx2.y * totalTiles.x + tileIdx2.x;
+
+            const vec2 tileMinMaxHeight = tileVerticalDims[tileIdx];
+
+
+            const vec3 BBOX[8] = {
+                vec3(mTilePos.x, tileMinMaxHeight.x, mTilePos.y),
+                vec3(mTilePos.x, tileMinMaxHeight.x, mTileEnd.y),
+                vec3(mTilePos.x, tileMinMaxHeight.y, mTilePos.y),
+                vec3(mTilePos.x, tileMinMaxHeight.y, mTileEnd.y),
+                vec3(mTileEnd.x, tileMinMaxHeight.x, mTilePos.y),
+                vec3(mTileEnd.x, tileMinMaxHeight.x, mTileEnd.y),
+                vec3(mTileEnd.x, tileMinMaxHeight.y, mTilePos.y),
+                vec3(mTileEnd.x, tileMinMaxHeight.y, mTileEnd.y)
+                };
+
+            bool left = true;
+            bool right = true;
+            bool top = true;
+            bool bottom = true;
+            bool front = true;
+            bool back = true;
+
+            for (uint j = 0; j < 8; ++j)
+            {
+                vec4 screenspacePt = MVP * vec4(BBOX[j], 1.0f);
+                screenspacePt /= abs(screenspacePt.w);
+                // if of AABB's vertices are on one side of a certain line,
+                // all of it is on that side of the line
+                // (lines are left-right-top-bottom of the screen)
+                left   = left   && screenspacePt.x < -1;
+                right  = right  && screenspacePt.x >  1;
+                top    = top    && screenspacePt.y < -1;
+                bottom = bottom && screenspacePt.y >  1;
+                front  = front  && screenspacePt.z >  1;
+                back   = back   && screenspacePt.z <  0;
+            }
+
+            if (left || right || top || bottom || front || back)
+            {
+                continue;
+            }
+
+
+            // We do not need ordering of these adds between themselves
+            const uint slot = atomicAdd(ourVisibleTileCount, 1);
+            
+            if (slot > MAX_TILES)
+            {
+                break;
+            }
+
+            ourVisibleTiles[slot] = tileIdx;
+        }
+    }
+
+    // Wait for all threads to complete their culling
+    barrier();
+
+    // intentionally non-atomic load
+    const uint myVisibleTileCount = ourVisibleTileCount;
+
+    if (leader)
+    {
+        // intentionally non-atomic store
+        ourTilesStart = atomicAdd(tiles[0], myVisibleTileCount);
+    }
+    
+    barrier();
+
+    // intentionally non-atomic load
+    const uint myTilesStart = ourTilesStart;
+
+    const uint idxStart =
+        gl_LocalInvocationID.x*gl_WorkGroupSize.y + gl_LocalInvocationID.y;
+    const uint idxStep = gl_WorkGroupSize.x*gl_WorkGroupSize.y;
+    for (uint i = idxStart; i < myVisibleTileCount; i += idxStep)
+    {
+        const uint tile = ourVisibleTiles[i];
+        tiles[1 + myTilesStart + i] = tile;
+    }
+    
+    if (gl_GlobalInvocationID.x == 0
+        && gl_GlobalInvocationID.y == 0)
+    {
+        // intentionally non-atomic load
+        const uint totalTiles = tiles[0];
+
+        landscapeIndirection.vertexCount = 4;
+        landscapeIndirection.instanceCount = totalTiles;
+        landscapeIndirection.firstVertex = 0;
+        landscapeIndirection.firstInstance = 1;
+
+        grassInderection.vertexCount = 3;
+        grassInderection.instanceCount =
+            landscapeInfo.grassDensity*totalTiles;
+        grassInderection.firstVertex = 0;
+        grassInderection.firstInstance = 1;
+    }
+}

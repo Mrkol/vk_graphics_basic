@@ -29,7 +29,8 @@ struct GpuMeshInfo
 struct Landscape
 {
   vk_utils::VulkanImageMem heightmap{};
-  VkDescriptorSet descset;
+  VkBuffer tileMinMaxHeights;
+  VkDeviceMemory allocation;
 };
 
 struct LandscapeGpuInfo
@@ -37,7 +38,9 @@ struct LandscapeGpuInfo
   LiteMath::float4x4 model;
   uint32_t width;
   uint32_t height;
-  char padding[128 - sizeof(LiteMath::float4x4) - 2*sizeof(uint32_t)];
+  uint32_t tileSize;
+  uint32_t grassDensity;
+  char padding[128 - sizeof(LiteMath::float4x4) - 4*sizeof(uint32_t)];
 };
 
 struct GpuLight
@@ -88,6 +91,31 @@ struct SceneManager
     }
     return result;
   }
+
+  std::size_t LandscapeNum() const { return m_landscapes.size(); }
+
+  std::vector<uint32_t> LandscapeTileCounts() const
+  {
+    std::vector<uint32_t> result;
+    result.reserve(m_landscapeInfos.size());
+    for (auto& landscape : m_landscapeInfos)
+    {
+      result.emplace_back(landscape.width/landscape.tileSize * landscape.height/landscape.tileSize);
+    }
+    return result;
+  }
+
+  std::vector<VkBuffer> GetLandscapeMinMaxHeights() const
+  {
+    std::vector<VkBuffer> result;
+    result.reserve(m_landscapes.size());
+    for (auto& landscape : m_landscapes)
+    {
+      result.emplace_back(landscape.tileMinMaxHeights);
+    }
+    return result;
+  }
+
   VkBuffer GetLandscapeInfos() const { return m_landscapeGpuInfos; }
 
   // Debug stuff

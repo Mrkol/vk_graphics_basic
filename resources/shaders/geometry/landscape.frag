@@ -67,5 +67,6 @@ void main()
 {
     outNormal = vec4(surf.cNorm, 0.0);
     outTangent = vec4(surf.cTangent, 0.0);
-    outAlbedo = vec4(Params.baseColor, shade());
+    const float shadow = Params.enableLandscapeShadows ? shade() : 1.f;
+    outAlbedo = vec4(Params.baseColor, shadow);
 }

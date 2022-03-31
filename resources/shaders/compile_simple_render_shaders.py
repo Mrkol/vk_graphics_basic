@@ -9,7 +9,8 @@ def fromDir(dir):
 if __name__ == '__main__':
     glslang_cmd = "glslangValidator"
 
-    shader_list = fromDir('geometry') + fromDir('lighting') + ["culling.comp", "quad3_vert.vert"]
+    shader_list = fromDir('geometry') + fromDir('lighting')\
+        + ["culling.comp", "landscape_culling.comp", "quad3_vert.vert"]
     
     for shader in shader_list:
         output = f"{shader}.spv"

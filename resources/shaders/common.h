@@ -35,6 +35,7 @@ struct UniformParams
   float screenHeight;
   mat4  lightMatrix;
   vec3  lightPos;
+  BOOL enableLandscapeShadows;
 };
 
 #undef PAD

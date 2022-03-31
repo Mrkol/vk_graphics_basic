@@ -51,6 +51,7 @@ public:
   static constexpr char const* WIREFRAME_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/wireframe.frag";
 
   static constexpr char const* CULLING_SHADER_PATH = "../resources/shaders/culling.comp";
+  static constexpr char const* LANDSCAPE_CULLING_SHADER_PATH = "../resources/shaders/landscape_culling.comp";
 
   SimpleRender(uint32_t a_width, uint32_t a_height);
   ~SimpleRender()  { Cleanup(); };
@@ -130,6 +131,11 @@ protected:
     uint32_t modelCount;
   } cullingPushConsts;
 
+  struct
+  {
+    LiteMath::float4x4 projView;
+  } landscapeCullingPushConsts;
+
   UniformParams m_uniforms {};
   VkBuffer m_ubo = VK_NULL_HANDLE;
   VkDeviceMemory m_uboAlloc = VK_NULL_HANDLE;
@@ -137,6 +143,9 @@ protected:
   
   VkBuffer m_indirectDrawBuffer = VK_NULL_HANDLE;
   VkBuffer m_instanceMappingBuffer = VK_NULL_HANDLE;
+
+  VkBuffer m_landscapeIndirectDrawBuffer = VK_NULL_HANDLE;
+  std::vector<VkBuffer> m_landscapeTileBuffers;
 
   VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
 
@@ -149,6 +158,7 @@ protected:
   pipeline_data_t m_deferredWireframePipeline {};
 
   pipeline_data_t m_cullingPipeline {};
+  pipeline_data_t m_landscapeCullingPipeline {};
 
   VkDescriptorSet m_graphicsDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_graphicsDescriptorSetLayout = VK_NULL_HANDLE;
@@ -158,6 +168,9 @@ protected:
 
   VkDescriptorSet m_cullingDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_cullingDescriptorSetLayout = VK_NULL_HANDLE;
+
+  std::vector<VkDescriptorSet> m_landscapeCullingDescriptorSets;
+  VkDescriptorSetLayout m_landscapeCullingDescriptorSetLayout = VK_NULL_HANDLE;
 
   VkDescriptorSet m_lightingDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_lightingDescriptorSetLayout = VK_NULL_HANDLE;
@@ -186,6 +199,7 @@ protected:
   uint32_t m_framesInFlight  = 2u;
   bool m_vsync = false;
   bool m_wireframe = false;
+  bool m_landscapeShadows = false;
   float m_sunAngle = 0.5f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
@@ -208,7 +222,9 @@ protected:
   void CreateInstance();
   void CreateDevice(uint32_t a_deviceId);
 
-  void BuildCommandBufferSimple(VkCommandBuffer cmdBuff, VkFramebuffer frameBuff);
+  void RecordFrameCommandBuffer(VkCommandBuffer cmdBuff, VkFramebuffer frameBuff);
+  void RecordStaticMeshCulling(VkCommandBuffer cmdBuff);
+  void RecordLandscapeCulling(VkCommandBuffer cmdBuff);
 
   virtual void SetupStaticMeshPipeline();
   virtual void SetupLandscapePipeline();

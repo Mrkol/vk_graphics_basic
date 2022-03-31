@@ -23,8 +23,11 @@ VkTransformMatrixKHR transformMatrixFromFloat4x4(const LiteMath::float4x4 &m)
 }
 
 SceneManager::SceneManager(VkDevice a_device, VkPhysicalDevice a_physDevice,
-  uint32_t a_transferQId, uint32_t a_graphicsQId, bool debug) : m_device(a_device), m_physDevice(a_physDevice),
-                 m_transferQId(a_transferQId), m_graphicsQId(a_graphicsQId)
+  uint32_t a_transferQId, uint32_t a_graphicsQId, bool)
+  : m_device(a_device)
+  , m_physDevice(a_physDevice)
+  , m_transferQId(a_transferQId)
+  , m_graphicsQId(a_graphicsQId)
 {
   vkGetDeviceQueue(m_device, m_transferQId, 0, &m_transferQ);
   vkGetDeviceQueue(m_device, m_graphicsQId, 0, &m_graphicsQ);
@@ -191,47 +194,81 @@ uint32_t SceneManager::AddMeshFromData(cmesh::SimpleMesh &meshData)
 
 void SceneManager::AddLandscape()
 {
-  constexpr std::size_t width = 1024;
-  constexpr std::size_t height = 1024;
+  constexpr std::size_t width = 256;
+  constexpr std::size_t height = 256;
+  constexpr std::size_t tileSize = 16;
+  constexpr std::size_t grassDensity = 256;
   constexpr std::array octaves{2.f, 10.f};
 
+  assert(width % tileSize == 0 && height % tileSize == 0);
+
+  const std::size_t tileWidth = width/tileSize;
+  const std::size_t tileHeight = width/tileSize;
+
   std::vector<float> heights(width*height, 0);
+  std::vector<LiteMath::float2> tileHeights(tileWidth*tileHeight,
+    LiteMath::float2(std::numeric_limits<float>::max(),
+      -std::numeric_limits<float>::max()));
   
   for (std::size_t i = 0; i < height; ++i)
   {
     for (std::size_t j = 0; j < width; ++j)
     {
+      auto& pixel = heights[i*width + j];
       for (auto o : octaves)
       {
-        heights[i*width + j] += perlin(10*o + static_cast<float>(i)/height*o, 10*o + static_cast<float>(j)/width*o)/o;
+        pixel += perlin(
+          10*o + static_cast<float>(i)/height*o,
+          10*o + static_cast<float>(j)/width*o) / o;
       }
+      auto& tile = tileHeights[i/tileSize*tileHeight + j/tileSize];
+      tile.x = std::min(tile.x, pixel);
+      tile.y = std::max(tile.y, pixel);
     }
   }
   
-  m_landscapes.emplace_back(
+  auto& landscape = m_landscapes.emplace_back(
     Landscape{
       .heightmap = vk_utils::allocateColorTextureFromDataLDR(m_device, m_physDevice,
         reinterpret_cast<const unsigned char*>(heights.data()), width, height,
         1, VK_FORMAT_R32_SFLOAT, m_pCopyHelper),
+      .tileMinMaxHeights = vk_utils::createBuffer(m_device,
+        tileHeights.size() * sizeof(tileHeights[0]),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT),
     });
 
-  constexpr float scale = 200.f;
+  landscape.allocation = vk_utils::allocateAndBindWithPadding(m_device, m_physDevice,
+    {landscape.tileMinMaxHeights},
+    VkMemoryAllocateFlags{});
+  
+  m_pCopyHelper->UpdateBuffer(landscape.tileMinMaxHeights, 0,
+    tileHeights.data(), tileHeights.size() * sizeof(tileHeights[0]));
 
-  LiteMath::float4x4 mat = LiteMath::scale4x4(float3(scale)) * LiteMath::translate4x4(float3(-0.5f, -0.1f, -0.5f));
+  constexpr float scale = 100.f;
+
+  LiteMath::float4x4 mat =
+    LiteMath::scale4x4(float3(scale))
+      * LiteMath::translate4x4(float3(-0.5f, -0.1f, -0.5f));
+
   m_landscapeInfos.emplace_back(LandscapeGpuInfo{
     .model = mat,
     .width = static_cast<uint32_t>(width),
     .height = static_cast<uint32_t>(height),
+    .tileSize = static_cast<uint32_t>(tileSize),
+    .grassDensity = static_cast<uint32_t>(grassDensity),
   });
 
-  
+
+  // TODO: KOSTYL, REMOVE
   auto randU = [] () { return float(rand()) / float(RAND_MAX); };
-  for (std::size_t i = 0; i < 200; ++i)
+  for (std::size_t i = 0; i < 10; ++i)
   {
     float x = randU();
     float y = randU();
-    float z = heights[static_cast<size_t>(x*static_cast<float>(width))*height + static_cast<size_t>(y*static_cast<float>(height))]
-      + randU() / scale;
+    float z = heights[
+      static_cast<size_t>(x*static_cast<float>(width))*height
+        + static_cast<size_t>(y*static_cast<float>(height))]
+          + randU() / scale;
     m_sceneLights.emplace_back(hydra_xml::LightInstance{
         0, 0,
         {}, {},
@@ -240,7 +277,8 @@ void SceneManager::AddLandscape()
   }
 }
 
-uint32_t SceneManager::InstanceMesh(const uint32_t meshId, const LiteMath::float4x4 &matrix, bool markForRender)
+uint32_t SceneManager::InstanceMesh(const uint32_t meshId,
+  const LiteMath::float4x4 &matrix, bool markForRender)
 {
   assert(meshId < m_meshInfos.size());
 
@@ -404,6 +442,14 @@ void SceneManager::FreeGPUResource()
     vkFreeMemory(m_device, m_geoMemAlloc, nullptr);
     m_geoMemAlloc = VK_NULL_HANDLE;
   }
+
+  for (auto& landscape : m_landscapes)
+  {
+    vkDestroyBuffer(m_device, landscape.tileMinMaxHeights, nullptr);
+    vkFreeMemory(m_device, landscape.allocation, nullptr);
+    vk_utils::deleteImg(m_device, &landscape.heightmap);
+  }
+  m_landscapes.clear();
 }
 
 void SceneManager::DestroyScene()
@@ -416,9 +462,4 @@ void SceneManager::DestroyScene()
   m_pMeshData = nullptr;
   m_instanceInfos.clear();
   m_instanceMatrices.clear();
-
-  for (auto& landscape : m_landscapes)
-  {
-    vk_utils::deleteImg(m_device, &landscape.heightmap);
-  }
 }

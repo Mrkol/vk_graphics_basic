@@ -4,8 +4,11 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 
+layout(location = 0) in uint in_index[];
+
+
 layout(vertices = 3) out;
-layout(location = 0) out float rigidity[];
+layout(location = 0) patch out uint index;
 
 
 void main()
@@ -19,9 +22,9 @@ void main()
         gl_TessLevelOuter[0] = 1;
         gl_TessLevelOuter[1] = tess;
         gl_TessLevelOuter[2] = tess;
+
+        index = in_index[0];
     }
 
     gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
-    // Rigidity decreases with the grass blade's height
-    rigidity[gl_InvocationID] = gl_InvocationID < 2 ? 1 : 0;
 }

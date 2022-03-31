@@ -436,6 +436,27 @@ void SimpleRender::SetupCullingPipeline()
 
   m_cullingPipeline.layout = maker.MakeLayout(m_device, {m_cullingDescriptorSetLayout}, sizeof(cullingPushConsts));
   m_cullingPipeline.pipeline = maker.MakePipeline(m_device);
+
+
+  auto minMaxHeights = m_pScnMgr->GetLandscapeMinMaxHeights();
+  m_landscapeCullingDescriptorSets.clear();
+  for (size_t i = 0; i < minMaxHeights.size(); ++i)
+  {
+    bindings.BindBegin(VK_SHADER_STAGE_COMPUTE_BIT);
+    bindings.BindBuffer(0, m_landscapeIndirectDrawBuffer, nullptr,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC);
+    bindings.BindBuffer(1, minMaxHeights[i]);
+    bindings.BindBuffer(2, m_pScnMgr->GetLandscapeInfos(), nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+    bindings.BindBuffer(3, m_landscapeTileBuffers[i], nullptr, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+    bindings.BindEnd(&m_landscapeCullingDescriptorSets.emplace_back(),
+      &m_landscapeCullingDescriptorSetLayout);
+  }
+
+
+  maker.LoadShader(m_device, std::string{LANDSCAPE_CULLING_SHADER_PATH} + ".spv");
+  
+  m_landscapeCullingPipeline.layout = maker.MakeLayout(m_device,
+    {m_landscapeCullingDescriptorSetLayout}, sizeof(landscapeCullingPushConsts));
+  m_landscapeCullingPipeline.pipeline = maker.MakePipeline(m_device);
 }
 
 void SimpleRender::CreateUniformBuffer()
@@ -465,17 +486,31 @@ void SimpleRender::CreateUniformBuffer()
 
   
   // worst case we'll see all instances
-  m_instanceMappingBuffer = vk_utils::createBuffer(m_device, sizeof(uint32_t)*(m_pScnMgr->InstancesNum() + 1),
+  m_instanceMappingBuffer = vk_utils::createBuffer(m_device,
+    sizeof(uint32_t)*(m_pScnMgr->InstancesNum() + 1),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
   // worst case we'll have to draw all model types
-  m_indirectDrawBuffer = vk_utils::createBuffer(m_device, sizeof(VkDrawIndexedIndirectCommand) * m_pScnMgr->MeshesNum(),
+  m_indirectDrawBuffer = vk_utils::createBuffer(m_device,
+    sizeof(VkDrawIndexedIndirectCommand) * m_pScnMgr->MeshesNum(),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
 
-  
-  VkMemoryAllocateFlags allocFlags {};
+
+  m_landscapeIndirectDrawBuffer = vk_utils::createBuffer(m_device,
+    2*sizeof(VkDrawIndirectCommand)*m_pScnMgr->LandscapeNum(),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+
+  std::vector<VkBuffer> allBuffers
+    {m_instanceMappingBuffer, m_indirectDrawBuffer, m_landscapeIndirectDrawBuffer};
+
+  for (auto tiles : m_pScnMgr->LandscapeTileCounts())
+  {
+    allBuffers.emplace_back(m_landscapeTileBuffers.emplace_back(vk_utils::createBuffer(m_device,
+      tiles * sizeof(uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)));
+  }
 
   m_indirectRenderingMemory = vk_utils::allocateAndBindWithPadding(m_device, m_physicalDevice,
-      {m_instanceMappingBuffer, m_indirectDrawBuffer}, allocFlags);
+      allBuffers, VkMemoryAllocateFlags{});
 }
 
 void SimpleRender::UpdateUniformBuffer(float a_time)
@@ -485,22 +520,13 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.screenWidth = static_cast<float>(m_width);
   m_uniforms.screenHeight = static_cast<float>(m_height);
   m_uniforms.lightPos = float3(0, std::sin(m_sunAngle), std::cos(m_sunAngle))*10000;
+  m_uniforms.enableLandscapeShadows = m_landscapeShadows;
   memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
 }
 
-void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebuffer a_frameBuff)
+void SimpleRender::RecordStaticMeshCulling(VkCommandBuffer a_cmdBuff)
 {
-  vkResetCommandBuffer(a_cmdBuff, 0);
-
-  VkCommandBufferBeginInfo beginInfo = {};
-  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-
-  VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo));
-
-
   vkCmdFillBuffer(a_cmdBuff, m_instanceMappingBuffer, 0, sizeof(uint), 0);
-
 
   {
     std::array bufferMemBarriers
@@ -525,7 +551,8 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
   }
 
   vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullingPipeline.pipeline);
-  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullingPipeline.layout, 0, 1, &m_cullingDescriptorSet, 0, nullptr);
+  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE,
+    m_cullingPipeline.layout, 0, 1, &m_cullingDescriptorSet, 0, nullptr);
   vkCmdPushConstants(a_cmdBuff, m_cullingPipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT,
       0, sizeof(cullingPushConsts), &cullingPushConsts);
 
@@ -560,13 +587,120 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
         bufferMemBarriers.size(), bufferMemBarriers.data(),
         0, nullptr);
   }
+}
+
+void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff)
+{
+  for (auto& buf : m_landscapeTileBuffers)
+  {
+    vkCmdFillBuffer(a_cmdBuff, buf, 0, sizeof(uint), 0);
+  }
+
+  {
+    std::vector<VkBufferMemoryBarrier> bufferMemBarriers;
+    bufferMemBarriers.reserve(m_landscapeTileBuffers.size());
+
+    for (auto& buf : m_landscapeTileBuffers)
+    {
+      bufferMemBarriers.emplace_back(VkBufferMemoryBarrier {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+        .buffer = buf,
+        .offset = 0,
+        .size = sizeof(uint)
+      });
+    }
+
+    vkCmdPipelineBarrier(a_cmdBuff,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        {},
+        0, nullptr,
+        bufferMemBarriers.size(), bufferMemBarriers.data(),
+        0, nullptr);
+  }
+
+
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, m_landscapeCullingPipeline.pipeline);
+  vkCmdPushConstants(a_cmdBuff, m_landscapeCullingPipeline.layout, VK_SHADER_STAGE_COMPUTE_BIT,
+      0, sizeof(landscapeCullingPushConsts), &landscapeCullingPushConsts);
+
+
+  for (std::size_t i = 0; i < m_landscapeCullingDescriptorSets.size(); ++i)
+  {
+    auto& set = m_landscapeCullingDescriptorSets[i];
+
+    std::vector<uint32_t> dynOffset{
+      static_cast<uint32_t>(i*2*sizeof(VkDrawIndirectCommand)),
+      static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))
+    };
+
+    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE,
+      m_landscapeCullingPipeline.layout, 0, 1, &set,
+      dynOffset.size(), dynOffset.data());
+    vkCmdDispatch(a_cmdBuff, 1, 1, 1);
+  }
+
+  {
+    std::vector bufferMemBarriers
+    {
+      VkBufferMemoryBarrier {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+        .buffer = m_landscapeIndirectDrawBuffer,
+        .offset = 0,
+        .size = VK_WHOLE_SIZE
+      }
+    };
+    bufferMemBarriers.reserve(m_landscapeTileBuffers.size() + 1);
+
+    for (auto& buf : m_landscapeTileBuffers)
+    {
+      bufferMemBarriers.emplace_back(
+        VkBufferMemoryBarrier {
+          .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+          .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+          .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+          .buffer = buf,
+          .offset = 0,
+          .size = VK_WHOLE_SIZE
+        });
+    }
+
+    vkCmdPipelineBarrier(a_cmdBuff,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT,
+        {},
+        0, nullptr,
+        bufferMemBarriers.size(), bufferMemBarriers.data(),
+        0, nullptr);
+  }
+}
+
+
+void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, VkFramebuffer a_frameBuff)
+{
+  vkResetCommandBuffer(a_cmdBuff, 0);
+
+  VkCommandBufferBeginInfo beginInfo = {};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+
+  VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo));
+
+
+  RecordStaticMeshCulling(a_cmdBuff);
+  RecordLandscapeCulling(a_cmdBuff);
+
+
 
 
 
   vk_utils::setDefaultViewport(a_cmdBuff, static_cast<float>(m_width), static_cast<float>(m_height));
   vk_utils::setDefaultScissor(a_cmdBuff, m_width, m_height);
 
-  ///// draw final scene to screen
   {
     VkRenderPassBeginInfo renderPassInfo = {};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -628,7 +762,7 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
           vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
               &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
 
-          vkCmdDrawIndexed(a_cmdBuff, 4, 1, 0, 0, 0);
+          vkCmdDraw(a_cmdBuff, 4, 1, 0, 0);
         }
       }
 
@@ -653,7 +787,7 @@ void SimpleRender::BuildCommandBufferSimple(VkCommandBuffer a_cmdBuff, VkFramebu
         vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.layout, 0,
           static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
 
-        vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);        
+        vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
       }
     }
     vkCmdEndRenderPass(a_cmdBuff);
@@ -765,6 +899,18 @@ void SimpleRender::Cleanup()
     m_indirectDrawBuffer = VK_NULL_HANDLE;
   }
 
+  if(m_landscapeIndirectDrawBuffer != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_landscapeIndirectDrawBuffer, nullptr);
+    m_landscapeIndirectDrawBuffer = VK_NULL_HANDLE;
+  }
+
+  for (auto& buffer : m_landscapeTileBuffers)
+  {
+    vkDestroyBuffer(m_device, buffer, nullptr);
+  }
+  m_landscapeTileBuffers.clear();
+
   if(m_instanceMappingBuffer != VK_NULL_HANDLE)
   {
     vkDestroyBuffer(m_device, m_instanceMappingBuffer, nullptr);
@@ -846,6 +992,7 @@ void SimpleRender::UpdateView()
   graphicsPushConsts.proj = mProjFix * mProj;
   graphicsPushConsts.view = mLookAt;
   cullingPushConsts.projView = mWorldViewProj;
+  landscapeCullingPushConsts.projView = mWorldViewProj;
 
   // TODO: should this really be here?
   cullingPushConsts.instanceCount = m_pScnMgr->InstancesNum();
@@ -911,7 +1058,7 @@ void SimpleRender::DrawFrameSimple()
   VkSemaphore waitSemaphores[] = {m_presentationResources.imageAvailable};
   VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
-  BuildCommandBufferSimple(currentCmdBuf, m_frameBuffers[imageIdx]);
+  RecordFrameCommandBuffer(currentCmdBuf, m_frameBuffers[imageIdx]);
 
   VkSubmitInfo submitInfo = {};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -974,9 +1121,11 @@ void SimpleRender::SetupGUIElements()
     ImGui::Begin("Simple render settings");
 
     ImGui::Checkbox("Wireframe", &m_wireframe);
+    ImGui::Checkbox("Landscape Shadows", &m_landscapeShadows);
     ImGui::SliderAngle("Sun", &m_sunAngle);
 
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    ImGui::Text("Camera pos: %.3f %.3f %.3f", m_cam.pos.x, m_cam.pos.y, m_cam.pos.z);
 
     ImGui::NewLine();
 
@@ -1058,7 +1207,7 @@ void SimpleRender::DrawFrameWithGUI()
   VkSemaphore waitSemaphores[] = {m_presentationResources.imageAvailable};
   VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
-  BuildCommandBufferSimple(currentCmdBuf, m_frameBuffers[imageIdx]);
+  RecordFrameCommandBuffer(currentCmdBuf, m_frameBuffers[imageIdx]);
 
   ImDrawData* pDrawData = ImGui::GetDrawData();
   auto currentGUICmdBuf = m_pGUIRender->BuildGUIRenderCommand(imageIdx, pDrawData);
