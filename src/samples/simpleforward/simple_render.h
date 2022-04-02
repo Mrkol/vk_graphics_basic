@@ -40,6 +40,10 @@ public:
   static constexpr char const* DEFERRED_LANDSCAPE_TESE_SHADER_PATH = "../resources/shaders/geometry/landscape.tese";
   static constexpr char const* DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/landscape.frag";
 
+  static constexpr char const* DEFERRED_GRASS_VERTEX_SHADER_PATH = "../resources/shaders/geometry/grass.vert";
+  static constexpr char const* DEFERRED_GRASS_TESC_SHADER_PATH = "../resources/shaders/geometry/grass.tesc";
+  static constexpr char const* DEFERRED_GRASS_TESE_SHADER_PATH = "../resources/shaders/geometry/grass.tese";
+
   static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting/lighting.vert";
   static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting/lighting.geom";
   static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting.frag";
@@ -153,6 +157,7 @@ protected:
   
   pipeline_data_t m_deferredPipeline {};
   pipeline_data_t m_deferredLandscapePipeline {};
+  pipeline_data_t m_deferredGrassPipeline {};
   pipeline_data_t m_lightingPipeline {};
   pipeline_data_t m_globalLightingPipeline {};
   pipeline_data_t m_deferredWireframePipeline {};

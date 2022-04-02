@@ -1,7 +1,6 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : require
-#extension GL_EXT_debug_printf : enable
 
 
 layout(push_constant) uniform params_t

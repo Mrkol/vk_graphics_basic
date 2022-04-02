@@ -69,7 +69,7 @@ void main()
             };
 
         
-        const float lod = calcLod(length(cTilePos.z));
+        const float lod = calcLod(length(cTilePos));
         const float neighborLods[] = {
                 calcLod(length(cTileNeighborPos[0])),
                 calcLod(length(cTileNeighborPos[1])),

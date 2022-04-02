@@ -197,7 +197,7 @@ void SceneManager::AddLandscape()
   constexpr std::size_t width = 1024;
   constexpr std::size_t height = 1024;
   constexpr std::size_t tileSize = 32;
-  constexpr std::size_t grassDensity = 256;
+  constexpr std::size_t grassDensity = 1024;
   constexpr std::array octaves{2.f, 10.f};
 
   assert(width % tileSize == 0 && height % tileSize == 0);

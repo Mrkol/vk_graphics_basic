@@ -222,87 +222,104 @@ void SimpleRender::SetupLandscapePipeline()
     bindings.BindEnd(&m_landscapeDescriptorSets.emplace_back(), &m_landscapeDescriptorSetLayout);
   }
 
-  std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths{
+  auto makeLandscapePipeline =
+    [this](std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths,
+      uint32_t controlPoints)
+    {
+      pipeline_data_t result;
+
+      vk_utils::GraphicsPipelineMaker maker;
+
+      maker.LoadShaders(m_device, shader_paths);
+
+      result.layout = maker.MakeLayout(m_device,
+        {m_landscapeDescriptorSetLayout}, sizeof(graphicsPushConsts));
+
+      maker.SetDefaultState(m_width, m_height);
+      
+      std::array<VkPipelineColorBlendAttachmentState, 3> cba_state;
+
+      cba_state.fill(VkPipelineColorBlendAttachmentState {
+          .blendEnable    = VK_FALSE,
+          .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+        });
+
+      maker.colorBlending.attachmentCount = static_cast<uint32_t>(cba_state.size());
+      maker.colorBlending.pAttachments = cba_state.data();
+
+      std::array dynStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+
+      VkPipelineDynamicStateCreateInfo dynamicState {
+        .sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = static_cast<uint32_t>(dynStates.size()),
+        .pDynamicStates    = dynStates.data(),
+      };
+
+      VkPipelineVertexInputStateCreateInfo vertexLayout{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 0,
+        .vertexAttributeDescriptionCount = 0,
+      };
+
+      VkPipelineInputAssemblyStateCreateInfo inputAssembly {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST,
+        .primitiveRestartEnable = false,
+      };
+
+      VkPipelineTessellationStateCreateInfo tessState{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO,
+        .patchControlPoints = controlPoints,
+      };
+
+      VkGraphicsPipelineCreateInfo pipelineInfo {
+        .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .flags               = 0,
+        .stageCount          = static_cast<uint32_t>(shader_paths.size()),
+        .pStages             = maker.shaderStageInfos,
+        .pVertexInputState   = &vertexLayout,
+        .pInputAssemblyState = &inputAssembly,
+        .pTessellationState  = &tessState,
+        .pViewportState      = &maker.viewportState,
+        .pRasterizationState = &maker.rasterizer,
+        .pMultisampleState   = &maker.multisampling,
+        .pDepthStencilState  = &maker.depthStencilTest,
+        .pColorBlendState    = &maker.colorBlending,
+        .pDynamicState       = &dynamicState,
+        .layout              = result.layout,
+        .renderPass          = m_gbuffer.renderpass,
+        .subpass             = 0,
+        .basePipelineHandle  = VK_NULL_HANDLE,
+      };
+
+      VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+        nullptr, &result.pipeline));
+
+      for (size_t i = 0; i < shader_paths.size(); ++i)
+      {
+        if(maker.shaderModules[i] != VK_NULL_HANDLE)
+          vkDestroyShaderModule(m_device, maker.shaderModules[i], VK_NULL_HANDLE);
+        maker.shaderModules[i] = VK_NULL_HANDLE;
+      }
+
+      return result;
+    };
+
+  m_deferredLandscapePipeline = makeLandscapePipeline(
+    {
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{DEFERRED_LANDSCAPE_TESC_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, std::string{DEFERRED_LANDSCAPE_TESE_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_LANDSCAPE_VERTEX_SHADER_PATH} + ".spv"}
-    };
+    }, 4);
 
-
-  vk_utils::GraphicsPipelineMaker maker;
-
-  maker.LoadShaders(m_device, shader_paths);
-
-  m_deferredLandscapePipeline.layout = maker.MakeLayout(m_device,
-    {m_landscapeDescriptorSetLayout}, sizeof(graphicsPushConsts));
-
-  maker.SetDefaultState(m_width, m_height);
-  
-  std::array<VkPipelineColorBlendAttachmentState, 3> cba_state;
-
-  cba_state.fill(VkPipelineColorBlendAttachmentState {
-      .blendEnable    = VK_FALSE,
-      .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
-    });
-
-  maker.colorBlending.attachmentCount = static_cast<uint32_t>(cba_state.size());
-  maker.colorBlending.pAttachments = cba_state.data();
-
-  std::array dynStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-
-  VkPipelineDynamicStateCreateInfo dynamicState {
-    .sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-    .dynamicStateCount = static_cast<uint32_t>(dynStates.size()),
-    .pDynamicStates    = dynStates.data(),
-  };
-
-  VkPipelineVertexInputStateCreateInfo vertexLayout{
-    .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-    .vertexBindingDescriptionCount = 0,
-    .vertexAttributeDescriptionCount = 0,
-  };
-
-  VkPipelineInputAssemblyStateCreateInfo inputAssembly {
-    .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-    .topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST,
-    .primitiveRestartEnable = false,
-  };
-
-  VkPipelineTessellationStateCreateInfo tessState{
-    .sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO,
-    .patchControlPoints = 4,
-  };
-
-  VkGraphicsPipelineCreateInfo pipelineInfo {
-    .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-    .flags               = 0,
-    .stageCount          = static_cast<uint32_t>(shader_paths.size()),
-    .pStages             = maker.shaderStageInfos,
-    .pVertexInputState   = &vertexLayout,
-    .pInputAssemblyState = &inputAssembly,
-    .pTessellationState  = &tessState,
-    .pViewportState      = &maker.viewportState,
-    .pRasterizationState = &maker.rasterizer,
-    .pMultisampleState   = &maker.multisampling,
-    .pDepthStencilState  = &maker.depthStencilTest,
-    .pColorBlendState    = &maker.colorBlending,
-    .pDynamicState       = &dynamicState,
-    .layout              = m_deferredLandscapePipeline.layout,
-    .renderPass          = m_gbuffer.renderpass,
-    .subpass             = 0,
-    .basePipelineHandle  = VK_NULL_HANDLE,
-  };
-
-  VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
-    nullptr, &m_deferredLandscapePipeline.pipeline));
-
-  for (size_t i = 0; i < shader_paths.size(); ++i)
-  {
-    if(maker.shaderModules[i] != VK_NULL_HANDLE)
-      vkDestroyShaderModule(m_device, maker.shaderModules[i], VK_NULL_HANDLE);
-    maker.shaderModules[i] = VK_NULL_HANDLE;
-  }
+  m_deferredGrassPipeline = makeLandscapePipeline(
+    {
+      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_FRAGMENT_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{DEFERRED_GRASS_TESC_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, std::string{DEFERRED_GRASS_TESE_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_GRASS_VERTEX_SHADER_PATH} + ".spv"}
+    }, 3);
 }
 
 void SimpleRender::SetupLightingPipeline()
@@ -734,37 +751,67 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, VkFramebu
     vkCmdBeginRenderPass(a_cmdBuff, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     {
       {
-        auto& deferredPipeline = m_wireframe ? m_deferredWireframePipeline : m_deferredPipeline;
-
-        vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.pipeline);
-
-        vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.layout, 0, 1,
-                                &m_graphicsDescriptorSet, 0, VK_NULL_HANDLE);
-
-        VkShaderStageFlags stageFlags = (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-            | (m_wireframe ? VK_SHADER_STAGE_GEOMETRY_BIT : 0));
-
-        VkDeviceSize zero_offset = 0u;
-        VkBuffer vertexBuf = m_pScnMgr->GetVertexBuffer();
-        VkBuffer indexBuf = m_pScnMgr->GetIndexBuffer();
-
-        vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &vertexBuf, &zero_offset);
-        vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
-
-        vkCmdPushConstants(a_cmdBuff, deferredPipeline.layout, stageFlags, 0,
-            sizeof(graphicsPushConsts), &graphicsPushConsts);
-
-        vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
-
-        vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.pipeline);
-
-        for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
         {
-          std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
-          vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
-              &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
+          auto& deferredPipeline = m_wireframe ? m_deferredWireframePipeline : m_deferredPipeline;
 
-          vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, 0, 1, 0);
+          vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.pipeline);
+
+          vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.layout, 0, 1,
+                                  &m_graphicsDescriptorSet, 0, VK_NULL_HANDLE);
+
+          const VkShaderStageFlags stageFlags = (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+              | (m_wireframe ? VK_SHADER_STAGE_GEOMETRY_BIT : 0));
+
+          VkDeviceSize zero_offset = 0u;
+          VkBuffer vertexBuf = m_pScnMgr->GetVertexBuffer();
+          VkBuffer indexBuf = m_pScnMgr->GetIndexBuffer();
+
+          vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &vertexBuf, &zero_offset);
+          vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
+
+          vkCmdPushConstants(a_cmdBuff, deferredPipeline.layout, stageFlags, 0,
+              sizeof(graphicsPushConsts), &graphicsPushConsts);
+
+          vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
+        }
+
+
+        {
+          const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+              | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+
+          vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.pipeline);
+
+          vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout, stageFlags, 0,
+              sizeof(graphicsPushConsts), &graphicsPushConsts);
+
+          for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
+          {
+            std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
+            vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
+                &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
+
+            vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, 0, 1, 0);
+          }
+        }
+
+        {
+          const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+              | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+
+          vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredGrassPipeline.pipeline);
+
+          vkCmdPushConstants(a_cmdBuff, m_deferredGrassPipeline.layout, stageFlags, 0,
+              sizeof(graphicsPushConsts), &graphicsPushConsts);
+
+          for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
+          {
+            std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
+            vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
+                &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
+
+            vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, sizeof(VkDrawIndirectCommand), 1, 0);
+          }
         }
       }
 
@@ -826,6 +873,7 @@ void SimpleRender::RecreateSwapChain()
   ClearPipeline(m_deferredPipeline);
   ClearPipeline(m_deferredWireframePipeline);
   ClearPipeline(m_deferredLandscapePipeline);
+  ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
 
@@ -1042,6 +1090,7 @@ void SimpleRender::ClearAllPipelines()
   ClearPipeline(m_deferredPipeline);
   ClearPipeline(m_deferredWireframePipeline);
   ClearPipeline(m_deferredLandscapePipeline);
+  ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
   ClearPipeline(m_cullingPipeline);
