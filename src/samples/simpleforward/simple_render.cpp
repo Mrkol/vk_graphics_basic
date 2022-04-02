@@ -74,8 +74,8 @@ void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_inst
   }
 
   m_landscapeHeightmapSampler = vk_utils::createSampler(
-    m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-    VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK);
+    m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
 
   m_pScnMgr = std::make_unique<SceneManager>(m_device, m_physicalDevice, m_queueFamilyIDXs.transfer,
                                              m_queueFamilyIDXs.graphics, false);
