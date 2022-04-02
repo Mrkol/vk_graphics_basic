@@ -10,6 +10,8 @@ layout(push_constant) uniform params_t
     mat4 mView;
 } params;
 
+layout(binding = 1, set = 0) uniform sampler2D heightmap;
+
 layout(binding = 2, set = 0) uniform LandscapeInfo
 {
     mat4 modelMat;
@@ -51,21 +53,33 @@ void main()
         const uvec2 tilePos = uvec2(tileId % totalTiles.x, tileId / totalTiles.x);
         const vec2 mTileSize = 1.f/vec2(totalTiles);
         const vec2 mTilePos2 = vec2(tilePos) * mTileSize;
-        // TODO: y shouldn't be 0 but it works for now lol
-        const vec3 mTilePos =
+
+        vec3 mTileCenterPos =
             vec3(mTilePos2.x + mTileSize.x/2.f, 0, mTilePos2.y + mTileSize.y/2.f);
+        mTileCenterPos.y = textureLod(heightmap, mTileCenterPos.xz, 0).r;
 
         const vec3 mTiledx = vec3(mTileSize.x, 0, 0)/2.f;
         const vec3 mTiledy = vec3(0, 0, mTileSize.y)/2.f;
 
+        vec3 mTileNeighborPos[] = {
+                mTileCenterPos - mTiledx,
+                mTileCenterPos - mTiledy,
+                mTileCenterPos + mTiledx,
+                mTileCenterPos + mTiledy,
+            };
+        mTileNeighborPos[0].y = textureLod(heightmap, mTileNeighborPos[0].xz, 0).r;
+        mTileNeighborPos[1].y = textureLod(heightmap, mTileNeighborPos[1].xz, 0).r;
+        mTileNeighborPos[2].y = textureLod(heightmap, mTileNeighborPos[2].xz, 0).r;
+        mTileNeighborPos[3].y = textureLod(heightmap, mTileNeighborPos[3].xz, 0).r;
+
         const mat4 MV = params.mView * landscapeInfo.modelMat;
 
-        const vec4 cTilePos = MV * vec4(mTilePos, 1);
+        const vec4 cTilePos = MV * vec4(mTileCenterPos, 1);
         const vec4 cTileNeighborPos[] = {
-                MV * vec4(mTilePos - mTiledx, 1),
-                MV * vec4(mTilePos - mTiledy, 1),
-                MV * vec4(mTilePos + mTiledx, 1),
-                MV * vec4(mTilePos + mTiledy, 1),
+                MV * vec4(mTileNeighborPos[0], 1),
+                MV * vec4(mTileNeighborPos[1], 1),
+                MV * vec4(mTileNeighborPos[2], 1),
+                MV * vec4(mTileNeighborPos[3], 1),
             };
 
         
