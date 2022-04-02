@@ -42,6 +42,8 @@ layout (location = 0) out VS_OUT
     vec2 texCoord;
 } vOut;
 
+layout (location = 3) flat out uint shadingModel;
+
 mat4 rotationMatrix(vec3 axis, float angle)
 {
     axis = normalize(axis);
@@ -59,9 +61,9 @@ void main()
 {
     // b is for blade
     vec3 bPos =
-        vec3(-0.1f, 0, 0)*gl_TessCoord.x +
+        vec3(-0.075f, 0, 0)*gl_TessCoord.x +
         vec3(0, 1.f, 0)*gl_TessCoord.y +
-        vec3(0.1f, 0, 0)*gl_TessCoord.z;
+        vec3(0.075f, 0, 0)*gl_TessCoord.z;
 
     bPos *= size;
 
@@ -95,6 +97,7 @@ void main()
     vOut.cNorm = normalize(mat3(normalModelView)*jacobian*mat3(model)*bNorm);
     vOut.cTangent = vec3(0, 0, 0);
     vOut.texCoord = vec2(0, 0);
+    shadingModel = 2;
 
     gl_Position = params.mProj * vec4(cPos, 1);
 }

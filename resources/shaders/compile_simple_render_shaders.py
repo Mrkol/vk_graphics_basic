@@ -3,8 +3,10 @@ import time
 import subprocess
 import pathlib
 
+bannedFilter = lambda n: not n.endswith('.spv') and not n.endswith('.h') and not n.endswith('.glsl')
+
 def fromDir(dir):
-    return list(filter(lambda n: not n.endswith('.spv') and not n.endswith('.h'), map(lambda n: dir + "/" + n, os.listdir(dir))))
+    return list(filter(bannedFilter, map(lambda n: dir + "/" + n, os.listdir(dir))))
 
 if __name__ == '__main__':
     glslang_cmd = "glslangValidator"

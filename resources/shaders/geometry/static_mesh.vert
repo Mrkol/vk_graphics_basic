@@ -32,6 +32,7 @@ layout (location = 0 ) out VS_OUT
     vec2 texCoord;
 } vOut;
 
+layout (location = 3) flat out uint shadingModel;
 
 void main(void)
 {
@@ -45,6 +46,7 @@ void main(void)
     vOut.sNorm    = mat3(normalModelView) * wNorm.xyz;
     vOut.sTangent = mat3(normalModelView) * wTang.xyz;
     vOut.texCoord = vTexCoordAndTang.xy;
+    shadingModel = 0;
 
     gl_Position   = params.mProj * modelView * vec4(vPosNorm.xyz, 1.0f);
 }

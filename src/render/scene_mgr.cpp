@@ -197,7 +197,7 @@ void SceneManager::AddLandscape()
   constexpr std::size_t width = 1024;
   constexpr std::size_t height = 1024;
   constexpr std::size_t tileSize = 32;
-  constexpr std::size_t grassDensity = 1024;
+  constexpr std::size_t grassDensity = 2048;
   constexpr std::array octaves{2.f, 10.f};
 
   assert(width % tileSize == 0 && height % tileSize == 0);
@@ -261,7 +261,7 @@ void SceneManager::AddLandscape()
 
   // TODO: KOSTYL, REMOVE
   auto randU = [] () { return float(rand()) / float(RAND_MAX); };
-  for (std::size_t i = 0; i < 10; ++i)
+  for (std::size_t i = 0; i < 100; ++i)
   {
     float x = randU();
     float y = randU();

@@ -43,34 +43,48 @@ float sq(float x) { return x*x; }
 
 void main()
 {
-    PointLight light = pointLights[InstanceIndex];
-    vec4 screenSpacePos = vec4(
+    const uint shadingModel = uint(subpassLoad(inNormal).w);
+
+    const PointLight light = pointLights[InstanceIndex];
+    const vec4 screenSpacePos = vec4(
         2.0 * gl_FragCoord.xy / vec2(Params.screenWidth, Params.screenHeight) - 1.0,
         subpassLoad(inDepth).r,
         1.0);
-    vec4 camSpacePos = inverse(params.mProj) * screenSpacePos;
+    const vec4 camSpacePos = inverse(params.mProj) * screenSpacePos;
 
-    vec3 position = camSpacePos.xyz / camSpacePos.w;
-    vec3 normal = subpassLoad(inNormal).xyz;
-    vec3 tangent = subpassLoad(inTangent).xyz;
-    vec3 albedo = subpassLoad(inAlbedo).rgb;
+    const vec3 position = camSpacePos.xyz / camSpacePos.w;
+    const vec3 normal = subpassLoad(inNormal).xyz;
+    const vec3 tangent = subpassLoad(inTangent).xyz;
+    const vec3 albedo = subpassLoad(inAlbedo).rgb;
 
 
-    vec3 lightPosition = (params.mView * vec4(light.posAndOuterRadius.xyz, 1.0)).xyz;
-    vec3 lightColor = light.colorAndInnerRadius.rgb;
-    float lightRmin2 = sq(light.colorAndInnerRadius.w);
-    float lightRmax2 = sq(light.posAndOuterRadius.w);
-
-    vec3 toLightVec = lightPosition - position;
-    vec3 lightDir = normalize(toLightVec);
-    float lightDist2 = dot(toLightVec, toLightVec);
+    const vec3 lightPosition = (params.mView * vec4(light.posAndOuterRadius.xyz, 1.0)).xyz;
+    const vec3 lightColor = light.colorAndInnerRadius.rgb;
+    const float lightRmin2 = sq(light.colorAndInnerRadius.w);
+    const float lightRmax2 = sq(light.posAndOuterRadius.w);
+    
+    const vec3 toLightVec = lightPosition - position;
+    const vec3 lightDir = normalize(toLightVec);
+    const float lightDist2 = dot(toLightVec, toLightVec);
 
     // from realtime rendering
-    float lightSampleDist = mix(lightRmin2, lightRmax2, 0.05);
-    float attenuation = lightSampleDist/max(lightRmin2, lightDist2)
+    const float lightSampleDist = mix(lightRmin2, lightRmax2, 0.05);
+    const float attenuation = lightSampleDist/max(lightRmin2, lightDist2)
         * sq(max(1 - sq(lightDist2 / lightRmax2), 0));
 
-    vec3 diffuse = max(dot(normal, lightDir), 0.0f) * lightColor;
+    vec3 diffuse = lightColor;
+    switch (shadingModel)
+    {
+        case 0:
+            diffuse *= max(dot(normal, lightDir), 0.0f);
+            break;
+        case 1:
+            diffuse *= abs(dot(normal, lightDir));
+            break;
+        case 2:
+            diffuse *= 0.5f*dot(normal, lightDir) + 0.5f;
+            break;
+    }
 
     out_fragColor = vec4(diffuse * albedo, attenuation);
 }

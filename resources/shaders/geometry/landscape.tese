@@ -2,6 +2,8 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : require
 
+#include "../perlin.glsl"
+
 
 layout(push_constant) uniform params_t
 {
@@ -38,21 +40,27 @@ layout (location = 0) out VS_OUT
     vec2 texCoord;
 } vOut;
 
+float calcHeight(vec2 pos)
+{
+    return textureLod(heightmap, pos, 0).r + cnoise(pos * 800.f)*0.001f;
+}
+
 vec3 calcNormal(vec2 pos)
 {
-    const vec2 dx = vec2(1.f/float(landscapeInfo.width), 0);
-    const vec2 dy = vec2(0, 1.f/float(landscapeInfo.height));
-    const float r = textureLod(heightmap, pos + dx, 0).r;
-    const float l = textureLod(heightmap, pos - dx, 0).r;
-    const float u = textureLod(heightmap, pos + dy, 0).r;
-    const float d = textureLod(heightmap, pos - dy, 0).r;
+    const float EPS = 1.f;
+    const vec2 dx = vec2(EPS/float(landscapeInfo.width), 0);
+    const vec2 dy = vec2(0, EPS/float(landscapeInfo.height));
+    const float r = calcHeight(pos + dx);
+    const float l = calcHeight(pos - dx);
+    const float u = calcHeight(pos + dy);
+    const float d = calcHeight(pos - dy);
 
-    return vec3(r - l, 0.01f, d - u) / 2.f;
+    return normalize(vec3(r - l, 0.01f, d - u) / 2.f);
 }
 
 vec3 calcPos(vec2 pos)
 {
-    return vec3(pos.x, textureLod(heightmap, pos, 0).r, pos.y);
+    return vec3(pos.x, calcHeight(pos), pos.y);
 }
 
 void main()

@@ -11,6 +11,8 @@ layout (location = 0) in GS_IN
     vec2 texCoord;
 } vIn[];
 
+layout (location = 3) flat in uint inShadingModel[];
+
 layout (line_strip, max_vertices = 4) out;
 
 layout (location = 0) out GS_OUT
@@ -19,6 +21,8 @@ layout (location = 0) out GS_OUT
     vec3 wTangent;
     vec2 texCoord;
 } vOut;
+
+layout (location = 3) flat out uint outShadingModel;
 
 out gl_PerVertex {
     vec4 gl_Position;
@@ -37,6 +41,7 @@ void main()
         vOut.wNorm = vIn[i % 3].wNorm;
         vOut.wTangent = vIn[i % 3].wTangent;
         vOut.texCoord = vIn[i % 3].texCoord;
+        outShadingModel = inShadingModel[i % 3];
 
         EmitVertex();
     }

@@ -32,6 +32,8 @@ float sq(float x) { return x*x; }
 
 void main()
 {
+    const uint shadingModel = uint(subpassLoad(inNormal).w);
+
     const vec4 screenSpacePos = vec4(
         2.0 * gl_FragCoord.xy / vec2(Params.screenWidth, Params.screenHeight) - 1.0,
         subpassLoad(inDepth).r,
@@ -50,8 +52,21 @@ void main()
 
     const vec3 toLightVec = lightPosition - position;
     const vec3 lightDir = normalize(toLightVec);
+    
+    vec3 diffuse = lightColor;
+    switch (shadingModel)
+    {
+        case 0:
+            diffuse *= max(dot(normal, lightDir), 0.0f);
+            break;
+        case 1:
+            diffuse *= abs(dot(normal, lightDir));
+            break;
+        case 2:
+            diffuse *= 0.5f*dot(normal, lightDir) + 0.5f;
+            break;
+    }
 
-    const vec3 diffuse = max(dot(normal, lightDir), 0.0f) * lightColor;
     const vec3 ambient = vec3(0.2, 0.2, 0.2);
 
     out_fragColor = vec4((ambient + diffuse*shade) * albedo, 0.5f);

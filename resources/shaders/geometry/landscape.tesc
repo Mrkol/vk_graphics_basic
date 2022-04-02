@@ -77,7 +77,7 @@ void main()
                 calcLod(length(cTileNeighborPos[3])),
             };
         
-        const float maxTess = landscapeInfo.tileSize - 1;
+        const float maxTess = (landscapeInfo.tileSize - 1)*10;
 
         gl_TessLevelInner[0] = max(maxTess * lod, 1);
         gl_TessLevelInner[1] = max(maxTess * lod, 1);
