@@ -11,7 +11,7 @@ def fromDir(dir):
 if __name__ == '__main__':
     glslang_cmd = "glslangValidator"
 
-    shader_list = fromDir('geometry') + fromDir('lighting')\
+    shader_list = fromDir('geometry') + fromDir('lighting') + fromDir('postfx')\
         + ["culling.comp", "landscape_culling.comp", "quad3_vert.vert"]
     
     for shader in shader_list:

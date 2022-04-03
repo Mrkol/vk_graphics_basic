@@ -25,6 +25,8 @@ struct GBuffer
 {
   std::vector<GBufferLayer> color_layers;
   GBufferLayer depth_stencil_layer;
+  // pre-postfx resolved gbuffer
+  vk_utils::VulkanImageMem resolved;
   VkRenderPass renderpass{VK_NULL_HANDLE};
 };
 
@@ -48,6 +50,8 @@ public:
   static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting/lighting.geom";
   static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting.frag";
   static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting_global.frag";
+  
+  static constexpr char const* POSTFX_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/postfx.frag";
 
   static constexpr char const* FULLSCREEN_QUAD3_VERTEX_SHADER_PATH = "../resources/shaders/quad3_vert.vert";
 
@@ -58,7 +62,7 @@ public:
   static constexpr char const* LANDSCAPE_CULLING_SHADER_PATH = "../resources/shaders/landscape_culling.comp";
 
   SimpleRender(uint32_t a_width, uint32_t a_height);
-  ~SimpleRender()  { Cleanup(); };
+  ~SimpleRender() override { Cleanup(); }
 
   inline uint32_t     GetWidth()      const override { return m_width; }
   inline uint32_t     GetHeight()     const override { return m_height; }
@@ -189,7 +193,7 @@ protected:
   // *** presentation
   VkSurfaceKHR m_surface = VK_NULL_HANDLE;
   VulkanSwapChain m_swapchain;
-  std::vector<VkFramebuffer> m_frameBuffers;
+  VkFramebuffer m_mainPassFrameBuffer;
   // ***
 
   // *** GUI
@@ -219,6 +223,14 @@ protected:
 
   GBuffer m_gbuffer;
 
+  VkRenderPass m_postFxRenderPass;
+  std::vector<VkFramebuffer> m_frameBuffers;
+
+  pipeline_data_t m_postFxPipeline;
+  
+  VkDescriptorSet m_postFxDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_postFxDescriptorSetLayout = VK_NULL_HANDLE;
+
   void ClearPipeline(pipeline_data_t& pipeline);
   void ClearAllPipelines();
 
@@ -227,13 +239,18 @@ protected:
   void CreateInstance();
   void CreateDevice(uint32_t a_deviceId);
 
-  void RecordFrameCommandBuffer(VkCommandBuffer cmdBuff, VkFramebuffer frameBuff);
+  void RecordFrameCommandBuffer(VkCommandBuffer cmdBuff, uint32_t swapchainIdx);
   void RecordStaticMeshCulling(VkCommandBuffer cmdBuff);
   void RecordLandscapeCulling(VkCommandBuffer cmdBuff);
+  void RecordStaticMesheRendering(VkCommandBuffer a_cmdBuff);
+  void RecordLandscapeRendering(VkCommandBuffer a_cmdBuff);
+  void RecordGrassRendering(VkCommandBuffer a_cmdBuff);
+  void RecordLightResolve(VkCommandBuffer a_cmdBuff);
 
   virtual void SetupStaticMeshPipeline();
   virtual void SetupLandscapePipeline();
   virtual void SetupLightingPipeline();
+  virtual void SetupPostfxPipeline();
   virtual void SetupCullingPipeline();
   void CleanupPipelineAndSwapchain();
   void RecreateSwapChain();
@@ -248,7 +265,9 @@ protected:
   void SetupValidationLayers();
 
   void ClearGBuffer();
+  void ClearPostFx();
   void CreateGBuffer();
+  void CreatePostFx();
 };
 
 

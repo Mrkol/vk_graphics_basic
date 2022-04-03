@@ -98,6 +98,7 @@ void SimpleRender::InitPresentation(VkSurfaceKHR &a_surface)
   VK_CHECK_RESULT(vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_presentationResources.renderingFinished));
 
   CreateGBuffer();
+  CreatePostFx();
 
   m_pGUIRender = std::make_unique<ImGuiRender>(m_instance, m_device, m_physicalDevice, m_queueFamilyIDXs.graphics, m_graphicsQueue, m_swapchain);
 }
@@ -436,6 +437,38 @@ void SimpleRender::SetupLightingPipeline()
     m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_TList(), 1);
 }
 
+void SimpleRender::SetupPostfxPipeline()
+{
+  auto& bindings = GetDescMaker();
+
+  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+  bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  bindings.BindImage(1, m_gbuffer.resolved.view,
+    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  bindings.BindImage(2, m_gbuffer.depth_stencil_layer.image.view,
+    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  bindings.BindEnd(&m_postFxDescriptorSet, &m_postFxDescriptorSetLayout);
+
+  
+  vk_utils::GraphicsPipelineMaker maker;
+
+  maker.LoadShaders(m_device, {
+    {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"},
+    {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{POSTFX_FRAGMENT_SHADER_PATH} + ".spv"},
+  });
+
+  m_postFxPipeline.layout = maker.MakeLayout(m_device,
+    {m_postFxDescriptorSetLayout}, sizeof(graphicsPushConsts));
+
+  maker.SetDefaultState(m_width, m_height);
+
+  m_postFxPipeline.pipeline = maker.MakePipeline(m_device,
+    VkPipelineVertexInputStateCreateInfo {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    },
+    m_postFxRenderPass, {}, vk_utils::IA_TList(), 0);
+}
+
 void SimpleRender::SetupCullingPipeline()
 {
   auto& bindings = GetDescMaker();
@@ -699,7 +732,94 @@ void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff)
 }
 
 
-void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, VkFramebuffer a_frameBuff)
+void SimpleRender::RecordStaticMesheRendering(VkCommandBuffer a_cmdBuff)
+{
+  auto& deferredPipeline = m_wireframe ? m_deferredWireframePipeline : m_deferredPipeline;
+
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.pipeline);
+
+  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.layout, 0, 1,
+    &m_graphicsDescriptorSet, 0, VK_NULL_HANDLE);
+
+  const VkShaderStageFlags stageFlags = (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                                         | (m_wireframe ? VK_SHADER_STAGE_GEOMETRY_BIT : 0));
+
+  VkDeviceSize zero_offset = 0u;
+  VkBuffer vertexBuf = m_pScnMgr->GetVertexBuffer();
+  VkBuffer indexBuf = m_pScnMgr->GetIndexBuffer();
+
+  vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &vertexBuf, &zero_offset);
+  vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
+
+  vkCmdPushConstants(a_cmdBuff, deferredPipeline.layout, stageFlags, 0,
+    sizeof(graphicsPushConsts), &graphicsPushConsts);
+
+  vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
+}
+
+void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff)
+{
+  const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                                        | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.pipeline);
+
+  vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout, stageFlags, 0,
+    sizeof(graphicsPushConsts), &graphicsPushConsts);
+
+  for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
+  {
+    std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
+    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
+      &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
+
+    vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, 0, 1, 0);
+  }
+}
+
+void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff)
+{
+  const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                                        | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredGrassPipeline.pipeline);
+
+  vkCmdPushConstants(a_cmdBuff, m_deferredGrassPipeline.layout, stageFlags, 0,
+    sizeof(graphicsPushConsts), &graphicsPushConsts);
+
+  for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
+  {
+    std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
+    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
+      &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
+
+    vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, sizeof(VkDrawIndirectCommand), 1, 0);
+  }
+}
+
+void SimpleRender::RecordLightResolve(VkCommandBuffer a_cmdBuff) {
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.pipeline);
+        
+  std::array dsets {m_lightingDescriptorSet, m_lightingFragmentDescriptorSet};
+  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.layout, 0,
+    static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
+
+  VkShaderStageFlags stageFlags =
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_GEOMETRY_BIT;
+  vkCmdPushConstants(a_cmdBuff, m_lightingPipeline.layout, stageFlags, 0,
+    sizeof(graphicsPushConsts), &graphicsPushConsts);
+        
+  vkCmdDraw(a_cmdBuff, 1, m_pScnMgr->LightsNum(), 0, 0);
+
+        
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.pipeline);
+  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.layout, 0,
+    static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
+
+  vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+}
+
+void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t swapchainIdx)
 {
   vkResetCommandBuffer(a_cmdBuff, 0);
 
@@ -714,21 +834,11 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, VkFramebu
   RecordLandscapeCulling(a_cmdBuff);
 
 
-
-
-
   vk_utils::setDefaultViewport(a_cmdBuff, static_cast<float>(m_width), static_cast<float>(m_height));
   vk_utils::setDefaultScissor(a_cmdBuff, m_width, m_height);
 
   {
-    VkRenderPassBeginInfo renderPassInfo = {};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_gbuffer.renderpass;
-    renderPassInfo.framebuffer = a_frameBuff;
-    renderPassInfo.renderArea.offset = {0, 0};
-    renderPassInfo.renderArea.extent = m_swapchain.GetExtent();
-
-    std::array clearValues {
+    std::array mainPassClearValues {
       VkClearValue {
         .color = {{0.0f, 0.0f, 0.0f, 1.0f}}
       },
@@ -745,99 +855,65 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, VkFramebu
         .color = {{0.0f, 0.0f, 0.0f, 1.0f}}
       },
     };
-    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassInfo.pClearValues = clearValues.data();
 
-    vkCmdBeginRenderPass(a_cmdBuff, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    VkRenderPassBeginInfo mainPassInfo {
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+      .renderPass = m_gbuffer.renderpass,
+      .framebuffer = m_mainPassFrameBuffer,
+      .renderArea = {
+        .offset = {0, 0},
+        .extent = m_swapchain.GetExtent(),
+      },
+      .clearValueCount = static_cast<uint32_t>(mainPassClearValues.size()),
+      .pClearValues = mainPassClearValues.data(),
+    };
+
+    vkCmdBeginRenderPass(a_cmdBuff, &mainPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     {
       {
-        {
-          auto& deferredPipeline = m_wireframe ? m_deferredWireframePipeline : m_deferredPipeline;
+        RecordStaticMesheRendering(a_cmdBuff);
 
-          vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.pipeline);
-
-          vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.layout, 0, 1,
-                                  &m_graphicsDescriptorSet, 0, VK_NULL_HANDLE);
-
-          const VkShaderStageFlags stageFlags = (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-              | (m_wireframe ? VK_SHADER_STAGE_GEOMETRY_BIT : 0));
-
-          VkDeviceSize zero_offset = 0u;
-          VkBuffer vertexBuf = m_pScnMgr->GetVertexBuffer();
-          VkBuffer indexBuf = m_pScnMgr->GetIndexBuffer();
-
-          vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &vertexBuf, &zero_offset);
-          vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
-
-          vkCmdPushConstants(a_cmdBuff, deferredPipeline.layout, stageFlags, 0,
-              sizeof(graphicsPushConsts), &graphicsPushConsts);
-
-          vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
-        }
-
-
-        {
-          const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-              | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
-
-          vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.pipeline);
-
-          vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout, stageFlags, 0,
-              sizeof(graphicsPushConsts), &graphicsPushConsts);
-
-          for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
-          {
-            std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
-            vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
-                &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
-
-            vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, 0, 1, 0);
-          }
-        }
-
-        {
-          const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-              | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
-
-          vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredGrassPipeline.pipeline);
-
-          vkCmdPushConstants(a_cmdBuff, m_deferredGrassPipeline.layout, stageFlags, 0,
-              sizeof(graphicsPushConsts), &graphicsPushConsts);
-
-          for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
-          {
-            std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
-            vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.layout, 0, 1,
-                &m_landscapeDescriptorSets[i], static_cast<uint32_t>(dynOffset.size()), dynOffset.data());
-
-            vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, sizeof(VkDrawIndirectCommand), 1, 0);
-          }
-        }
+        RecordLandscapeRendering(a_cmdBuff);
+        
+        RecordGrassRendering(a_cmdBuff);
       }
 
       vkCmdNextSubpass(a_cmdBuff, VK_SUBPASS_CONTENTS_INLINE);
 
       {
-        vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.pipeline);
-        
-        std::array dsets {m_lightingDescriptorSet, m_lightingFragmentDescriptorSet};
-        vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.layout, 0,
-          static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
-
-        VkShaderStageFlags stageFlags =
-          VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_GEOMETRY_BIT;
-        vkCmdPushConstants(a_cmdBuff, m_lightingPipeline.layout, stageFlags, 0,
-            sizeof(graphicsPushConsts), &graphicsPushConsts);
-        
-        vkCmdDraw(a_cmdBuff, 1, m_pScnMgr->LightsNum(), 0, 0);
-
-        
-        vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.pipeline);
-        vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.layout, 0,
-          static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
-
-        vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+        RecordLightResolve(a_cmdBuff);
       }
+    }
+    vkCmdEndRenderPass(a_cmdBuff);
+
+
+    
+    std::array postFxClearValues {
+      VkClearValue {
+        .color = {{0.0f, 0.0f, 0.0f, 1.0f}}
+      },
+    };
+    VkRenderPassBeginInfo postFxInfo{
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+      .renderPass = m_postFxRenderPass,
+      .framebuffer = m_frameBuffers[swapchainIdx],
+      .renderArea = {
+        .offset = {0, 0},
+        .extent = m_swapchain.GetExtent(),
+      },
+      .clearValueCount = static_cast<uint32_t>(mainPassClearValues.size()),
+      .pClearValues = mainPassClearValues.data(),
+    };
+
+    vkCmdBeginRenderPass(a_cmdBuff, &postFxInfo, VK_SUBPASS_CONTENTS_INLINE);
+    {
+      vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_postFxPipeline.pipeline);
+      vkCmdPushConstants(a_cmdBuff, m_postFxPipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT,
+          0, sizeof(graphicsPushConsts), &graphicsPushConsts);
+      vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_postFxPipeline.layout,
+          0, 1, &m_postFxDescriptorSet, 0, nullptr);
+
+      vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
     }
     vkCmdEndRenderPass(a_cmdBuff);
   }
@@ -862,6 +938,7 @@ void SimpleRender::CleanupPipelineAndSwapchain()
   m_frameFences.clear();
 
   ClearGBuffer();
+  ClearPostFx();
 
   m_swapchain.Cleanup();
 }
@@ -876,6 +953,7 @@ void SimpleRender::RecreateSwapChain()
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
+  ClearPipeline(m_postFxPipeline);
 
   CleanupPipelineAndSwapchain();
   auto oldImagesNum = m_swapchain.GetImageCount();
@@ -883,9 +961,11 @@ void SimpleRender::RecreateSwapChain()
     oldImagesNum, m_vsync);
 
   CreateGBuffer();
+  CreatePostFx();
   SetupStaticMeshPipeline();
   SetupLandscapePipeline();
   SetupLightingPipeline();
+  SetupPostfxPipeline();
 
   m_frameFences.resize(m_framesInFlight);
   VkFenceCreateInfo fenceInfo = {};
@@ -1020,6 +1100,7 @@ void SimpleRender::ProcessInput(const AppInput &input)
     SetupStaticMeshPipeline();
     SetupLandscapePipeline();
     SetupLightingPipeline();
+    SetupPostfxPipeline();
     SetupCullingPipeline();
   }
 
@@ -1057,6 +1138,7 @@ void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
   SetupStaticMeshPipeline();
   SetupLandscapePipeline();
   SetupLightingPipeline();
+  SetupPostfxPipeline();
   SetupCullingPipeline();
 
   auto loadedCam = m_pScnMgr->GetCamera(0);
@@ -1093,6 +1175,7 @@ void SimpleRender::ClearAllPipelines()
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
+  ClearPipeline(m_postFxPipeline);
   ClearPipeline(m_cullingPipeline);
   ClearPipeline(m_landscapeCullingPipeline);
 }
@@ -1110,7 +1193,7 @@ void SimpleRender::DrawFrameSimple()
   VkSemaphore waitSemaphores[] = {m_presentationResources.imageAvailable};
   VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
-  RecordFrameCommandBuffer(currentCmdBuf, m_frameBuffers[imageIdx]);
+  RecordFrameCommandBuffer(currentCmdBuf, imageIdx);
 
   VkSubmitInfo submitInfo = {};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1259,7 +1342,7 @@ void SimpleRender::DrawFrameWithGUI()
   VkSemaphore waitSemaphores[] = {m_presentationResources.imageAvailable};
   VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
-  RecordFrameCommandBuffer(currentCmdBuf, m_frameBuffers[imageIdx]);
+  RecordFrameCommandBuffer(currentCmdBuf, imageIdx);
 
   ImDrawData* pDrawData = ImGui::GetDrawData();
   auto currentGUICmdBuf = m_pGUIRender->BuildGUIRenderCommand(imageIdx, pDrawData);
@@ -1305,32 +1388,15 @@ void SimpleRender::ClearGBuffer()
     m_gbuffer.renderpass = VK_NULL_HANDLE;
   }
 
-  for (auto fb : m_frameBuffers)
+  if (m_mainPassFrameBuffer != VK_NULL_HANDLE)
   {
-    vkDestroyFramebuffer(m_device, fb, nullptr);
+    vkDestroyFramebuffer(m_device, m_mainPassFrameBuffer, nullptr);
+    m_mainPassFrameBuffer = VK_NULL_HANDLE;
   }
-
-  m_frameBuffers.clear();
 
   auto clearLayer = [this](GBufferLayer& layer)
     {
-      if (layer.image.view != VK_NULL_HANDLE)
-      {
-        vkDestroyImageView(m_device, layer.image.view, nullptr);
-        layer.image.view = VK_NULL_HANDLE;
-      }
-
-      if (layer.image.image != VK_NULL_HANDLE)
-      {
-        vkDestroyImage(m_device, layer.image.image, nullptr);
-        layer.image.image = VK_NULL_HANDLE;
-      }
-
-      if (layer.image.mem != VK_NULL_HANDLE)
-      {
-        vkFreeMemory(m_device, layer.image.mem, nullptr);
-        layer.image.mem = nullptr;
-      }
+      vk_utils::deleteImg(m_device, &layer.image);
     };
 
   for (auto& layer : m_gbuffer.color_layers)
@@ -1339,8 +1405,25 @@ void SimpleRender::ClearGBuffer()
   }
 
   m_gbuffer.color_layers.clear();
+  vk_utils::deleteImg(m_device, &m_gbuffer.resolved);
 
   clearLayer(m_gbuffer.depth_stencil_layer);
+}
+
+void SimpleRender::ClearPostFx()
+{
+  for (auto framebuf : m_frameBuffers)
+  {
+    vkDestroyFramebuffer(m_device, framebuf, nullptr);
+  }
+
+  m_frameBuffers.clear();
+  
+  if (m_postFxRenderPass != VK_NULL_HANDLE)
+  {
+    vkDestroyRenderPass(m_device, m_postFxRenderPass, nullptr);
+    m_postFxRenderPass = VK_NULL_HANDLE;
+  }
 }
 
 void SimpleRender::CreateGBuffer()
@@ -1385,7 +1468,6 @@ void SimpleRender::CreateGBuffer()
     m_gbuffer.color_layers.push_back(makeLayer(format, usage));
   }
 
-
   std::vector<VkFormat> depthFormats = {
       VK_FORMAT_D32_SFLOAT,
       VK_FORMAT_D32_SFLOAT_S8_UINT,
@@ -1400,6 +1482,10 @@ void SimpleRender::CreateGBuffer()
     VkImageUsageFlagBits(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT));
 
 
+  m_gbuffer.resolved.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, m_width, m_height,
+    VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &m_gbuffer.resolved);
+
 
   // Renderpass
   {
@@ -1408,9 +1494,9 @@ void SimpleRender::CreateGBuffer()
     attachmentDescs.fill(VkAttachmentDescription {
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       });
@@ -1430,9 +1516,9 @@ void SimpleRender::CreateGBuffer()
     // Present image
     {
       auto& present = attachmentDescs[layers.size() + 1];
-      present.format = m_swapchain.GetFormat();
+      present.format = m_gbuffer.resolved.format;
       present.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      present.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      present.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     std::array<VkAttachmentReference, layers.size()> gBufferColorRefs;
@@ -1477,18 +1563,6 @@ void SimpleRender::CreateGBuffer()
     // Use subpass dependencies for attachment layout transitions
     std::array dependencies {
       VkSubpassDependency {
-        .srcSubpass = VK_SUBPASS_EXTERNAL,
-        .dstSubpass = 1,
-        // Source is THE PRESENT SEMAPHORE BEING SIGNALED ON THIS PRECISE STAGE!!!!!
-        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        // Destination is swapchain image being filled with gbuffer resolution
-        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        // Semaphore waiting doesn't do any memory ops
-        .srcAccessMask = {},
-        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
-      },
-      VkSubpassDependency {
         .srcSubpass = 0,
         .dstSubpass = 1,
         // Source is gbuffer being written
@@ -1498,7 +1572,16 @@ void SimpleRender::CreateGBuffer()
         .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT,
         .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
-      }
+      },
+      VkSubpassDependency {
+        .srcSubpass = 1,
+        .dstSubpass = VK_SUBPASS_EXTERNAL,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+      },
     };
 
     VkRenderPassCreateInfo renderPassInfo {
@@ -1514,29 +1597,107 @@ void SimpleRender::CreateGBuffer()
     VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_gbuffer.renderpass));
   }
 
-  // Framebuffers
-  m_frameBuffers.resize(m_swapchain.GetImageCount());
-  for (std::size_t i = 0; i < m_frameBuffers.size(); ++i)
+  // Framebuffer
+  std::array<VkImageView, layers.size() + 2> attachments;
+  for (std::size_t j = 0; j < layers.size(); ++j)
   {
-    std::array<VkImageView, layers.size() + 2> attachments;
-    for (std::size_t j = 0; j < layers.size(); ++j)
-    {
-      attachments[j] = m_gbuffer.color_layers[j].image.view;
-    }
+    attachments[j] = m_gbuffer.color_layers[j].image.view;
+  }
 
-    attachments[layers.size()] = m_gbuffer.depth_stencil_layer.image.view;
-    attachments.back() = m_swapchain.GetAttachment(i).view;
+  attachments[layers.size()] = m_gbuffer.depth_stencil_layer.image.view;
+  attachments.back() = m_gbuffer.resolved.view;
+
+  VkFramebufferCreateInfo fbufCreateInfo {
+    .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+    .pNext = NULL,
+    .renderPass = m_gbuffer.renderpass,
+    .attachmentCount = static_cast<uint32_t>(attachments.size()),
+    .pAttachments = attachments.data(),
+    .width = m_width,
+    .height = m_height,
+    .layers = 1,
+  };
+  VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_mainPassFrameBuffer));
+}
+
+void SimpleRender::CreatePostFx()
+{
+  // Renderpass
+  {
+    std::array attachmentDescs{
+      VkAttachmentDescription {
+        .format = m_swapchain.GetFormat(),
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        // no stencil in present img
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+      },
+    };
+
+    std::array postfxColorRefs{
+      VkAttachmentReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+    };
+
+    std::array subpasses {
+      VkSubpassDescription {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = static_cast<uint32_t>(postfxColorRefs.size()),
+        .pColorAttachments = postfxColorRefs.data(),
+      },
+    };
+
+    // Use subpass dependencies for attachment layout transitions
+    std::array dependencies {
+      VkSubpassDependency {
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        // Source is THE PRESENT SEMAPHORE BEING SIGNALED ON THIS PRECISE STAGE!!!!!
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        // Destination is swapchain image being filled with gbuffer resolution
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        // Semaphore waiting doesn't do any memory ops
+        .srcAccessMask = {},
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+      },
+    };
+
+    VkRenderPassCreateInfo renderPassInfo {
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+      .attachmentCount = static_cast<uint32_t>(attachmentDescs.size()),
+      .pAttachments = attachmentDescs.data(),
+      .subpassCount = static_cast<uint32_t>(subpasses.size()),
+      .pSubpasses = subpasses.data(),
+      .dependencyCount = static_cast<uint32_t>(dependencies.size()),
+      .pDependencies = dependencies.data(),
+    };
+
+    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_postFxRenderPass));
+  }
+
+  // Framebuffer
+  m_frameBuffers.resize(m_swapchain.GetImageCount());
+  for (uint32_t i = 0; i < m_frameBuffers.size(); ++i)
+  {
+    std::array attachments{
+      m_swapchain.GetAttachment(i).view,
+    };
 
     VkFramebufferCreateInfo fbufCreateInfo {
       .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
       .pNext = NULL,
-      .renderPass = m_gbuffer.renderpass,
+      .renderPass = m_postFxRenderPass,
       .attachmentCount = static_cast<uint32_t>(attachments.size()),
       .pAttachments = attachments.data(),
       .width = m_width,
       .height = m_height,
       .layers = 1,
     };
+
     VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_frameBuffers[i]));
   }
 }
