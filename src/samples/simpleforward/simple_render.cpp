@@ -443,6 +443,8 @@ void SimpleRender::SetupPostfxPipeline()
 
   bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
   bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+  // TODO: Sampler should be different here
   bindings.BindImage(1, m_gbuffer.resolved.view,
     m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   bindings.BindImage(2, m_gbuffer.depth_stencil_layer.image.view,
@@ -1511,7 +1513,7 @@ void SimpleRender::CreateGBuffer()
     {
       auto& depth = attachmentDescs[layers.size()];
       depth.format = m_gbuffer.depth_stencil_layer.image.format;
-      depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      depth.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
     // Present image
     {
