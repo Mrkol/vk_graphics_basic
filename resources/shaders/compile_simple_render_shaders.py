@@ -11,7 +11,7 @@ def fromDir(dir):
 
 if __name__ == '__main__':
     glslang_cmd = "glslangValidator"
-    forceRecompile = sys.argv[1] == "-f"
+    forceRecompile = "-f" in sys.argv
 
     shader_list = fromDir('geometry') + fromDir('lighting') + fromDir('postfx')\
         + ["culling.comp", "landscape_culling.comp", "quad3_vert.vert"]

@@ -14,19 +14,23 @@ layout(binding = 2, set = 0) uniform LandscapeInfo
     uint grassDensity;
 } landscapeInfo;
 
-float landscapeShade(vec2 mPos, vec3 light)
+vec3 sampleHeightmap(vec2 mPos)
+{
+    return vec3(mPos.x, textureLod(heightmap, mPos, 0).r, mPos.y);
+}
+
+float landscapeShade(vec3 mPos, vec3 light)
 {
     const vec3 mLightPos = (inverse(landscapeInfo.modelMat) * vec4(light, 1)).xyz;
 
     // Performed in terrain's model space
-    const vec3 start = vec3(mPos.x, textureLod(heightmap, mPos, 0).r, mPos.y);
     const float h = 1.5f/float(landscapeInfo.width + landscapeInfo.height);
-    const vec3 dir = normalize(mLightPos - start);
+    const vec3 dir = normalize(mLightPos - mPos);
     const uint maxIters = 512;
 
     float result = 0;
 
-    vec3 current = start;
+    vec3 current = mPos;
     for (uint i = 0; i < maxIters
         && current.x >=  0 && current.x <= 1
         && current.y >= -1 && current.y <= 1

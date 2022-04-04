@@ -100,7 +100,7 @@ void main()
         wBladeBasePos = vec3(landscapeInfo.modelMat * vec4(mBladePos, 1));
         yaw = 6.28318f * hash(int(bladeIndex));
         size = 1.f - hash(-int(bladeIndex))*0.5f;
-        shadow = Params.enableLandscapeShadows ? landscapeShade(mBladePos2, Params.lightPos) : 1.f;
+        shadow = Params.enableLandscapeShadows ? landscapeShade(sampleHeightmap(mBladePos2), Params.lightPos) : 1.f;
     }
 
     gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;

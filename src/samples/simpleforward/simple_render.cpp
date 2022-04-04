@@ -453,8 +453,13 @@ void SimpleRender::SetupPostfxPipeline()
   
   bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
   bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+  // TODO: REMOVE THIS, BREAKS INCAPSULATION!!!
+  bindings.BindImage(1, m_pScnMgr->GetLandscapeHeightmaps()[0], m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  bindings.BindBuffer(2, m_pScnMgr->GetLandscapeInfos(), nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
   // TODO: Sampler should be different here
-  bindings.BindImage(1, m_gbuffer.depth_stencil_layer.image.view,
+  bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
     m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   bindings.BindEnd(&m_fogDescriptorSet, &m_fogDescriptorSetLayout);
 

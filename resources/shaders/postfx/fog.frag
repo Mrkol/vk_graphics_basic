@@ -4,6 +4,8 @@
 
 #include "../common.h"
 #include "../perlin.glsl"
+// TODO: Remove this shit. It wrecks incapsulation.
+#include "../landscape_raymarch.glsl"
 
 
 
@@ -18,7 +20,7 @@ layout(binding = 0, set = 0) uniform AppData
     UniformParams Params;
 };
 
-layout(binding = 1, set = 0) uniform sampler2D inDepth;
+layout(binding = 3, set = 0) uniform sampler2D inDepth;
 
 // For compat with quad3_vert
 layout (location = 0) in FS_IN { vec2 texCoord; } vIn;
@@ -62,17 +64,39 @@ void main()
     const float stepLen = 5;
     const vec4 wDir = normalize(wSurface - wCamPos);
 
+    const vec3 FOG_COLOR_IN_LIGHT = vec3(0.6, 0.6, 0.6);
+    const vec3 FOG_COLOR_IN_SHADOW = vec3(0.1, 0.1, 0.1);
+
+    const mat4 lmInverse = inverse(landscapeInfo.modelMat);
+
+
     vec4 wCurrent = screenToWorld(fragPos, 0);
     float translucency = 1;
+    vec3 color = vec3(0);
     for (uint i = 0; i < 64; ++i)
     {
-        translucency *= exp(-sq(fogDensity(wCurrent.xyz)*stepLen));
         if (dot(wCurrent, wDir) > dot(wSurface, wDir) || translucency < 0.0001f)
         {
             break;
         }
+
+        const vec4 lmCur = lmInverse * wCurrent;
+        float shadow = 1.0;
+        if (0 <= lmCur.x && lmCur.x <= 1
+            && 0 <= lmCur.z && lmCur.z <= 1
+            && Params.enableLandscapeShadows)
+        {
+            shadow = landscapeShade(lmCur.xyz, Params.lightPos);
+        }
+
+        const vec3 curColor = shadow*FOG_COLOR_IN_LIGHT + (1 - shadow)*FOG_COLOR_IN_SHADOW;
+
+        const float beersTerm = exp(-sq(fogDensity(wCurrent.xyz)*stepLen));
+
+        color += translucency * curColor * (1 - beersTerm) * 0.5f;
+        translucency *= beersTerm;
         wCurrent += wDir*stepLen;
     }
 
-    out_fragColor = vec4(0.5, 0.5, 0.5, translucency);
+    out_fragColor = vec4(color, translucency);
 }

@@ -30,8 +30,27 @@ layout(location = 0) out vec4 out_fragColor;
 void main()
 {
     const vec2 fragPos = gl_FragCoord.xy / vec2(Params.screenWidth, Params.screenHeight);
+    const vec2 preDelta =
+        1.f / vec2(Params.screenWidth/Params.postFxDownscaleFactor, Params.screenHeight/Params.postFxDownscaleFactor);
 
     const vec4 color = textureLod(inColor, fragPos, 0);
-    const vec4 fog = textureLod(inFog, fragPos, 0);
+    
+    const int blurRad = 2;
+    vec4 fog = vec4(0);
+    float normCoeff = 0;
+    for (int i = -blurRad; i <= blurRad; ++i)
+    {
+        for (int j = -blurRad; j <= blurRad; ++j)
+        {
+            const vec2 delta = vec2(i, j)*preDelta;
+            const vec2 samplePos = fragPos + delta;
+            const float l = length(delta);
+            const float coeff = exp(-l*l);
+            fog += textureLod(inFog, samplePos, 0)*coeff;
+            normCoeff += coeff;
+        }
+    }
+    fog /= normCoeff;
+    
     out_fragColor = fog.a*color + (1 - fog.a)*fog;
 }
