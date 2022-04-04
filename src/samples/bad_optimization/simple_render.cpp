@@ -89,7 +89,7 @@ void SimpleRender::InitPresentation(VkSurfaceKHR &a_surface)
   };
   vk_utils::getSupportedDepthFormat(m_physicalDevice, depthFormats, &m_depthBuffer.format);
   m_depthBuffer  = vk_utils::createDepthTexture(m_device, m_physicalDevice, m_width, m_height, m_depthBuffer.format);
-  m_frameBuffers = vk_utils::createFrameBuffers(m_device, m_swapchain, m_screenRenderPass, m_depthBuffer.view);
+  m_framebuffers = vk_utils::createFrameBuffers(m_device, m_swapchain, m_screenRenderPass, m_depthBuffer.view);
 
   m_pGUIRender = std::make_shared<ImGuiRender>(m_instance, m_device, m_physicalDevice, m_queueFamilyIDXs.graphics, m_graphicsQueue, m_swapchain);
 }
@@ -391,12 +391,12 @@ void SimpleRender::CleanupPipelineAndSwapchain()
 
   vk_utils::deleteImg(m_device, &m_depthBuffer);
 
-  for (size_t i = 0; i < m_frameBuffers.size(); i++)
+  for (size_t i = 0; i < m_framebuffers.size(); i++)
   {
-    if(m_frameBuffers[i] != VK_NULL_HANDLE)
+    if(m_framebuffers[i] != VK_NULL_HANDLE)
     {
-      vkDestroyFramebuffer(m_device, m_frameBuffers[i], nullptr);
-      m_frameBuffers[i] = VK_NULL_HANDLE;
+      vkDestroyFramebuffer(m_device, m_framebuffers[i], nullptr);
+      m_framebuffers[i] = VK_NULL_HANDLE;
     }
   }
 
@@ -429,7 +429,7 @@ void SimpleRender::RecreateSwapChain()
   
   m_screenRenderPass = vk_utils::createDefaultRenderPass(m_device, m_swapchain.GetFormat());
   m_depthBuffer      = vk_utils::createDepthTexture(m_device, m_physicalDevice, m_width, m_height, m_depthBuffer.format);
-  m_frameBuffers     = vk_utils::createFrameBuffers(m_device, m_swapchain, m_screenRenderPass, m_depthBuffer.view);
+  m_framebuffers     = vk_utils::createFrameBuffers(m_device, m_swapchain, m_screenRenderPass, m_depthBuffer.view);
 
   m_frameFences.resize(m_framesInFlight);
   VkFenceCreateInfo fenceInfo = {};
@@ -443,7 +443,7 @@ void SimpleRender::RecreateSwapChain()
   m_cmdBuffersDrawMain = vk_utils::createCommandBuffers(m_device, m_commandPool, m_framesInFlight);
   for (uint32_t i = 0; i < m_swapchain.GetImageCount(); ++i)
   {
-    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
+    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_framebuffers[i],
                              m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
   }
 
@@ -581,7 +581,7 @@ void SimpleRender::ProcessInput(const AppInput &input)
 
     for (uint32_t i = 0; i < m_framesInFlight; ++i)
     {
-      BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
+      BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_framebuffers[i],
                                m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
     }
   }
@@ -640,7 +640,7 @@ void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
 
   for (uint32_t i = 0; i < m_framesInFlight; ++i)
   {
-    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_frameBuffers[i],
+    BuildCommandBufferSimple(m_cmdBuffersDrawMain[i], m_framebuffers[i],
                              m_swapchain.GetAttachment(i).view, m_basicForwardPipeline.pipeline);
   }
 }
@@ -658,7 +658,7 @@ void SimpleRender::DrawFrameSimple()
   VkSemaphore waitSemaphores[] = {m_presentationResources.imageAvailable};
   VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
-  BuildCommandBufferSimple(currentCmdBuf, m_frameBuffers[imageIdx], m_swapchain.GetAttachment(imageIdx).view,
+  BuildCommandBufferSimple(currentCmdBuf, m_framebuffers[imageIdx], m_swapchain.GetAttachment(imageIdx).view,
                            m_basicForwardPipeline.pipeline);
 
   VkSubmitInfo submitInfo = {};
@@ -762,7 +762,7 @@ void SimpleRender::DrawFrameWithGUI()
   VkSemaphore waitSemaphores[] = {m_presentationResources.imageAvailable};
   VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
-  BuildCommandBufferSimple(currentCmdBuf, m_frameBuffers[imageIdx], m_swapchain.GetAttachment(imageIdx).view,
+  BuildCommandBufferSimple(currentCmdBuf, m_framebuffers[imageIdx], m_swapchain.GetAttachment(imageIdx).view,
     m_basicForwardPipeline.pipeline);
 
   ImDrawData* pDrawData = ImGui::GetDrawData();

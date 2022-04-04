@@ -2,6 +2,9 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : require
 
+#include "../common.h"
+#include "../landscape_raymarch.glsl"
+
 
 layout(push_constant) uniform params_t
 {
@@ -9,18 +12,10 @@ layout(push_constant) uniform params_t
     mat4 mView;
 } params;
 
-layout(binding = 1, set = 0) uniform sampler2D heightmap;
-
-layout(binding = 2, set = 0) uniform LandscapeInfo
+layout(binding = 0, set = 0) uniform AppData
 {
-    mat4 modelMat;
-    uint width;
-    uint height;
-    // In heightmap pixels
-    uint tileSize;
-    // Amount of grass blades per tile
-    uint grassDensity;
-} landscapeInfo;
+    UniformParams Params;
+};
 
 layout(std430, binding = 3) buffer tiles_t
 {
@@ -34,6 +29,7 @@ layout(vertices = 3) out;
 layout(location = 0) patch out vec3 wBladeBasePos;
 layout(location = 1) patch out float yaw;
 layout(location = 2) patch out float size;
+layout(location = 3) patch out float shadow;
 
 
 
@@ -104,6 +100,7 @@ void main()
         wBladeBasePos = vec3(landscapeInfo.modelMat * vec4(mBladePos, 1));
         yaw = 6.28318f * hash(int(bladeIndex));
         size = 1.f - hash(-int(bladeIndex))*0.5f;
+        shadow = Params.enableLandscapeShadows ? landscapeShade(mBladePos2, Params.lightPos) : 1.f;
     }
 
     gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;

@@ -125,7 +125,7 @@ protected:
   // *** presentation
   VkSurfaceKHR m_surface = VK_NULL_HANDLE;
   VulkanSwapChain m_swapchain;
-  std::vector<VkFramebuffer> m_frameBuffers;
+  std::vector<VkFramebuffer> m_framebuffers;
   vk_utils::VulkanImageMem m_depthBuffer{};
   // ***
 

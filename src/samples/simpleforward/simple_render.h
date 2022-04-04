@@ -45,12 +45,14 @@ public:
   static constexpr char const* DEFERRED_GRASS_VERTEX_SHADER_PATH = "../resources/shaders/geometry/grass.vert";
   static constexpr char const* DEFERRED_GRASS_TESC_SHADER_PATH = "../resources/shaders/geometry/grass.tesc";
   static constexpr char const* DEFERRED_GRASS_TESE_SHADER_PATH = "../resources/shaders/geometry/grass.tese";
+  static constexpr char const* DEFERRED_GRASS_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/grass.frag";
 
   static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting/lighting.vert";
   static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting/lighting.geom";
   static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting.frag";
   static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting_global.frag";
   
+  static constexpr char const* FOG_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/fog.frag";
   static constexpr char const* POSTFX_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/postfx.frag";
 
   static constexpr char const* FULLSCREEN_QUAD3_VERTEX_SHADER_PATH = "../resources/shaders/quad3_vert.vert";
@@ -60,6 +62,8 @@ public:
 
   static constexpr char const* CULLING_SHADER_PATH = "../resources/shaders/culling.comp";
   static constexpr char const* LANDSCAPE_CULLING_SHADER_PATH = "../resources/shaders/landscape_culling.comp";
+
+  static constexpr uint32_t POSTFX_DOWNSCALE_FACTOR = 4;
 
   SimpleRender(uint32_t a_width, uint32_t a_height);
   ~SimpleRender() override { Cleanup(); }
@@ -223,13 +227,22 @@ protected:
 
   GBuffer m_gbuffer;
 
-  VkRenderPass m_postFxRenderPass;
-  std::vector<VkFramebuffer> m_frameBuffers;
+  VkRenderPass m_prePostFxRenderPass;
+  vk_utils::VulkanImageMem m_fogImage;
 
+  VkRenderPass m_postFxRenderPass;
+  std::vector<VkFramebuffer> m_framebuffers;
+  
+  VkFramebuffer m_prePostFxFramebuffer;
+  
+  pipeline_data_t m_fogPipeline;
   pipeline_data_t m_postFxPipeline;
   
   VkDescriptorSet m_postFxDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_postFxDescriptorSetLayout = VK_NULL_HANDLE;
+  
+  VkDescriptorSet m_fogDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_fogDescriptorSetLayout = VK_NULL_HANDLE;
 
   void ClearPipeline(pipeline_data_t& pipeline);
   void ClearAllPipelines();

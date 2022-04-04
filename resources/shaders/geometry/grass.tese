@@ -33,6 +33,7 @@ layout(triangles, equal_spacing, cw) in;
 layout(location = 0) patch in vec3 wBladeBasePos;
 layout(location = 1) patch in float yaw;
 layout(location = 2) patch in float size;
+layout(location = 3) patch in float inShadow;
 
 
 layout (location = 0) out VS_OUT
@@ -43,6 +44,7 @@ layout (location = 0) out VS_OUT
 } vOut;
 
 layout (location = 3) flat out uint shadingModel;
+layout (location = 4) flat out float outShadow;
 
 mat4 rotationMatrix(vec3 axis, float angle)
 {
@@ -98,6 +100,7 @@ void main()
     vOut.cTangent = vec3(0, 0, 0);
     vOut.texCoord = vec2(0, 0);
     shadingModel = 2;
+    outShadow = inShadow;
 
     gl_Position = params.mProj * vec4(cPos, 1);
 }

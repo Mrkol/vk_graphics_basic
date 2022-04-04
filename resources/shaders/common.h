@@ -36,6 +36,7 @@ struct UniformParams
   mat4  lightMatrix;
   vec3  lightPos;
   BOOL enableLandscapeShadows;
+  uint postFxDownscaleFactor;
 };
 
 #undef PAD

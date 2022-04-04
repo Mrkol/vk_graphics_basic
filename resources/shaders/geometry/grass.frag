@@ -3,21 +3,16 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "../common.h"
-#include "../landscape_raymarch.glsl"
 
-
-layout(push_constant) uniform params_t
+layout (location = 0) in VS_OUT
 {
-    mat4 mProj;
-    mat4 mView;
-} params;
-
-layout (location = 0 ) in VS_OUT
-{
-    vec3 cNorm;
-    vec3 cTangent;
+    vec3 sNorm;
+    vec3 sTangent;
     vec2 texCoord;
 } surf;
+
+layout (location = 3) flat in uint shadingModel;
+layout(location = 4) flat in float shadow;
 
 layout(binding = 0, set = 0) uniform AppData
 {
@@ -28,10 +23,10 @@ layout (location = 0) out vec4 outNormal;
 layout (location = 1) out vec4 outTangent;
 layout (location = 2) out vec4 outAlbedo;
 
+
 void main()
 {
-    outNormal = vec4(surf.cNorm, 0.0);
-    outTangent = vec4(surf.cTangent, 0.0);
-    const float shadow = Params.enableLandscapeShadows ? landscapeShade(surf.texCoord, Params.lightPos) : 1.f;
+    outNormal = vec4(surf.sNorm, float(shadingModel));
+    outTangent = vec4(surf.sTangent, 0.0);
     outAlbedo = vec4(Params.baseColor, shadow);
 }

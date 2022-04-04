@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import subprocess
 import pathlib
@@ -10,13 +11,14 @@ def fromDir(dir):
 
 if __name__ == '__main__':
     glslang_cmd = "glslangValidator"
+    forceRecompile = sys.argv[1] == "-f"
 
     shader_list = fromDir('geometry') + fromDir('lighting') + fromDir('postfx')\
         + ["culling.comp", "landscape_culling.comp", "quad3_vert.vert"]
     
     for shader in shader_list:
         output = f"{shader}.spv"
-        if not os.path.exists(output) or os.path.getmtime(shader) > os.path.getmtime(output):
+        if forceRecompile or not os.path.exists(output) or os.path.getmtime(shader) > os.path.getmtime(output):
             subprocess.run([glslang_cmd, "-V", "-g", shader, "-o", output])
         else:
             print(f"Up to date: {shader}")
