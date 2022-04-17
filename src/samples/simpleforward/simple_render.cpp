@@ -1,9 +1,17 @@
 #include "simple_render.h"
+
+#include <random>
+
 #include "../../utils/input_definitions.h"
 
 #include <geom/vk_mesh.h>
 #include <vk_pipeline.h>
 #include <vk_buffers.h>
+
+
+static std::default_random_engine rndEngine;
+static std::uniform_real_distribution<float> randUNorm(0.0f, 1.0f);
+
 
 SimpleRender::SimpleRender(uint32_t a_width, uint32_t a_height) : m_width(a_width), m_height(a_height)
 {
@@ -76,6 +84,9 @@ void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_inst
   m_landscapeHeightmapSampler = vk_utils::createSampler(
     m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
     VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
+  m_noiseSampler = vk_utils::createSampler(
+    m_device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK);
 
   m_pScnMgr = std::make_unique<SceneManager>(m_device, m_physicalDevice, m_queueFamilyIDXs.transfer,
                                              m_queueFamilyIDXs.graphics, false);
@@ -448,6 +459,8 @@ void SimpleRender::SetupPostfxPipeline()
     m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   bindings.BindImage(2, m_fogImage.view,
     m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  bindings.BindImage(3, m_ssaoImage.view,
+    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   bindings.BindEnd(&m_postFxDescriptorSet, &m_postFxDescriptorSetLayout);
 
   
@@ -462,6 +475,21 @@ void SimpleRender::SetupPostfxPipeline()
   bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
     m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   bindings.BindEnd(&m_fogDescriptorSet, &m_fogDescriptorSetLayout);
+
+  
+  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+  bindings.BindBuffer(0, m_ubo,
+    nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  // TODO: Sampler should be different here
+  bindings.BindImage(1, m_gbuffer.depth_stencil_layer.image.view,
+    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  bindings.BindImage(2, m_gbuffer.color_layers[0].image.view,
+    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  bindings.BindImage(3, m_ssaoNoise.view,
+    m_noiseSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  bindings.BindBuffer(4, m_ssaoKernel,
+    nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  bindings.BindEnd(&m_ssaoDescriptorSet, &m_ssaoDescriptorSetLayout);
 
   
   vk_utils::GraphicsPipelineMaker maker;
@@ -493,9 +521,51 @@ void SimpleRender::SetupPostfxPipeline()
     m_fogPipeline.layout = maker.MakeLayout(m_device,
       {m_fogDescriptorSetLayout}, sizeof(graphicsPushConsts));
     
-    maker.SetDefaultState(m_width, m_height);
+    maker.SetDefaultState(m_width, m_height, 2);
 
     m_fogPipeline.pipeline = maker.MakePipeline(m_device,
+      VkPipelineVertexInputStateCreateInfo {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+      },
+      m_prePostFxRenderPass, {}, vk_utils::IA_TList(), 0);
+  }
+
+  {
+    maker.LoadShaders(m_device, {
+        {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{SSAO_FRAGMENT_SHADER_PATH} + ".spv"},
+    });
+
+    struct SpecializationData {
+      uint32_t kernelSize = SSAO_KERNEL_SIZE;
+      float radius = SSAO_RADIUS;
+    } specializationData;
+    std::array specializationMapEntries = {
+      VkSpecializationMapEntry{0, offsetof(SpecializationData, kernelSize), sizeof(SpecializationData::kernelSize)},
+      VkSpecializationMapEntry{1, offsetof(SpecializationData, radius), sizeof(SpecializationData::radius)},
+    };
+    VkSpecializationInfo specializationInfo{
+      .mapEntryCount = static_cast<uint32_t>(specializationMapEntries.size()),
+      .pMapEntries = specializationMapEntries.data(),
+      .dataSize = sizeof(specializationData),
+      .pData = &specializationData,
+    };
+
+    for (auto& info : maker.shaderStageInfos)
+    {
+      if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+      {
+        info.pSpecializationInfo = &specializationInfo;
+        break;
+      }
+    }
+
+    m_ssaoPipeline.layout = maker.MakeLayout(m_device,
+      {m_ssaoDescriptorSetLayout}, sizeof(graphicsPushConsts));
+    
+    maker.SetDefaultState(m_width, m_height, 2);
+
+    m_ssaoPipeline.pipeline = maker.MakePipeline(m_device,
       VkPipelineVertexInputStateCreateInfo {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
       },
@@ -585,8 +655,12 @@ void SimpleRender::CreateUniformBuffer()
     2*sizeof(VkDrawIndirectCommand)*m_pScnMgr->LandscapeNum(),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
 
-  std::vector<VkBuffer> allBuffers
-    {m_instanceMappingBuffer, m_indirectDrawBuffer, m_landscapeIndirectDrawBuffer};
+  m_ssaoKernel = vk_utils::createBuffer(m_device,
+    SSAO_KERNEL_SIZE_BYTES,
+      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+  std::vector allBuffers
+    {m_instanceMappingBuffer, m_indirectDrawBuffer, m_landscapeIndirectDrawBuffer, m_ssaoKernel};
 
   for (auto tiles : m_pScnMgr->LandscapeTileCounts())
   {
@@ -597,6 +671,17 @@ void SimpleRender::CreateUniformBuffer()
 
   m_indirectRenderingMemory = vk_utils::allocateAndBindWithPadding(m_device, m_physicalDevice,
       allBuffers, VkMemoryAllocateFlags{});
+
+  std::vector<LiteMath::float4> ssaoKernel(SSAO_KERNEL_SIZE);
+  for (uint32_t i = 0; i < SSAO_KERNEL_SIZE; ++i)
+  {
+    auto sample =
+        normalize(float3(randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine)));
+    const float scale = static_cast<float>(i) / static_cast<float>(SSAO_KERNEL_SIZE);
+    sample *= lerp(0.1f, 1.0f, randUNorm(rndEngine) * scale * scale);
+    ssaoKernel[i] = LiteMath::float4(sample.x, sample.y, sample.z, 0.0f);
+  }
+  m_pScnMgr->GetCopyHelper()->UpdateBuffer(m_ssaoKernel, 0, ssaoKernel.data(), ssaoKernel.size()*sizeof(ssaoKernel[0]));
 }
 
 void SimpleRender::UpdateUniformBuffer(float a_time)
@@ -607,6 +692,7 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.screenHeight = static_cast<float>(m_height);
   m_uniforms.lightPos = float3(0, std::sin(m_sunAngle), std::cos(m_sunAngle))*10000;
   m_uniforms.enableLandscapeShadows = m_landscapeShadows;
+  m_uniforms.enableSsao = m_ssao;
   memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
 }
 
@@ -947,6 +1033,18 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
           0, 1, &m_fogDescriptorSet, 0, nullptr);
 
       vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+
+
+      if (m_ssao)
+      {
+        vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_ssaoPipeline.pipeline);
+        vkCmdPushConstants(a_cmdBuff, m_ssaoPipeline.layout, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(graphicsPushConsts), &graphicsPushConsts);
+        vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_ssaoPipeline.layout,
+            0, 1, &m_ssaoDescriptorSet, 0, nullptr);
+
+        vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+      }
     }
     vkCmdEndRenderPass(a_cmdBuff);
 
@@ -1017,6 +1115,7 @@ void SimpleRender::RecreateSwapChain()
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
   ClearPipeline(m_fogPipeline);
+  ClearPipeline(m_ssaoPipeline);
   ClearPipeline(m_postFxPipeline);
 
   CleanupPipelineAndSwapchain();
@@ -1062,6 +1161,12 @@ void SimpleRender::Cleanup()
     m_landscapeHeightmapSampler = VK_NULL_HANDLE;
   }
 
+  if (m_noiseSampler != VK_NULL_HANDLE)
+  {
+    vkDestroySampler(m_device, m_noiseSampler, nullptr);
+    m_noiseSampler = VK_NULL_HANDLE;
+  }
+
   ClearAllPipelines();
 
   if (m_presentationResources.imageAvailable != VK_NULL_HANDLE)
@@ -1081,10 +1186,16 @@ void SimpleRender::Cleanup()
     m_commandPool = VK_NULL_HANDLE;
   }
 
-  if(m_ubo != VK_NULL_HANDLE)
+  if (m_ubo != VK_NULL_HANDLE)
   {
     vkDestroyBuffer(m_device, m_ubo, nullptr);
     m_ubo = VK_NULL_HANDLE;
+  }
+
+  if (m_ssaoKernel != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_ssaoKernel, nullptr);
+    m_ssaoKernel = VK_NULL_HANDLE;
   }
 
   if(m_indirectDrawBuffer != VK_NULL_HANDLE)
@@ -1241,6 +1352,7 @@ void SimpleRender::ClearAllPipelines()
   ClearPipeline(m_globalLightingPipeline);
   ClearPipeline(m_postFxPipeline);
   ClearPipeline(m_fogPipeline);
+  ClearPipeline(m_ssaoPipeline);
   ClearPipeline(m_cullingPipeline);
   ClearPipeline(m_landscapeCullingPipeline);
 }
@@ -1322,6 +1434,7 @@ void SimpleRender::SetupGUIElements()
 
     ImGui::Checkbox("Wireframe", &m_wireframe);
     ImGui::Checkbox("Landscape Shadows", &m_landscapeShadows);
+    ImGui::Checkbox("Screenspace ambient occlusion", &m_ssao);
     ImGui::SliderAngle("Sun", &m_sunAngle);
 
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
@@ -1501,8 +1614,10 @@ void SimpleRender::ClearPostFx()
     vkDestroyRenderPass(m_device, m_prePostFxRenderPass, nullptr);
     m_prePostFxRenderPass = VK_NULL_HANDLE;
   }
-
+  
   vk_utils::deleteImg(m_device, &m_fogImage);
+  vk_utils::deleteImg(m_device, &m_ssaoImage);
+  vk_utils::deleteImg(m_device, &m_ssaoNoise);
 }
 
 void SimpleRender::CreateGBuffer()
@@ -1590,14 +1705,11 @@ void SimpleRender::CreateGBuffer()
     {
       auto& depth = attachmentDescs[layers.size()];
       depth.format = m_gbuffer.depth_stencil_layer.image.format;
-      depth.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
     // Present image
     {
       auto& present = attachmentDescs[layers.size() + 1];
       present.format = m_gbuffer.resolved.format;
-      present.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      present.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     std::array<VkAttachmentReference, layers.size()> gBufferColorRefs;
@@ -1703,8 +1815,26 @@ void SimpleRender::CreatePostFx()
 {
   m_fogImage.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, m_width / POSTFX_DOWNSCALE_FACTOR, m_height / POSTFX_DOWNSCALE_FACTOR,
-      VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-      &m_fogImage);
+    VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    &m_fogImage);
+
+  m_ssaoImage.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, m_width / POSTFX_DOWNSCALE_FACTOR, m_height / POSTFX_DOWNSCALE_FACTOR,
+    VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    &m_ssaoImage);
+
+  {
+    std::vector<LiteMath::float2> ssaoNoise(SSAO_NOISE_DIM * SSAO_NOISE_DIM);
+    for (uint32_t i = 0; i < static_cast<uint32_t>(ssaoNoise.size()); i++)
+    {
+      ssaoNoise[i] = LiteMath::float2(randUNorm(rndEngine) * 2.0f - 1.0f, randUNorm(rndEngine) * 2.0f - 1.0f);
+    }
+
+    m_ssaoNoise = vk_utils::allocateColorTextureFromDataLDR(m_device, m_physicalDevice,
+      reinterpret_cast<const unsigned char*>(ssaoNoise.data()), SSAO_NOISE_DIM, SSAO_NOISE_DIM,
+      1, VK_FORMAT_R8G8_SNORM, m_pScnMgr->GetCopyHelper());
+  }
+  
 
   // pre post fx renderpass
   {
@@ -1720,10 +1850,22 @@ void SimpleRender::CreatePostFx()
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
+      VkAttachmentDescription {
+        .format = m_ssaoImage.format,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        // no stencil
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
     };
 
     std::array postfxColorRefs{
       VkAttachmentReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+      VkAttachmentReference{1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
     };
 
     std::array subpasses {
@@ -1842,6 +1984,7 @@ void SimpleRender::CreatePostFx()
   {
     std::array attachments{
       m_fogImage.view,
+      m_ssaoImage.view,
     };
 
     VkFramebufferCreateInfo fbufCreateInfo {

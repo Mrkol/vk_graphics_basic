@@ -26,6 +26,7 @@ layout(binding = 3, set = 0) uniform sampler2D inDepth;
 layout (location = 0) in FS_IN { vec2 texCoord; } vIn;
 
 layout(location = 0) out vec4 out_fragColor;
+layout(location = 1) out float _;
 
 
 

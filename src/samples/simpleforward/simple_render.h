@@ -53,6 +53,7 @@ public:
   static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting_global.frag";
   
   static constexpr char const* FOG_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/fog.frag";
+  static constexpr char const* SSAO_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/ssao.frag";
   static constexpr char const* POSTFX_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/postfx.frag";
 
   static constexpr char const* FULLSCREEN_QUAD3_VERTEX_SHADER_PATH = "../resources/shaders/quad3_vert.vert";
@@ -65,12 +66,17 @@ public:
 
   static constexpr uint32_t POSTFX_DOWNSCALE_FACTOR = 4;
 
+  static constexpr uint32_t SSAO_KERNEL_SIZE = 64;
+  static constexpr uint32_t SSAO_KERNEL_SIZE_BYTES = 4*sizeof(float)*SSAO_KERNEL_SIZE;
+  static constexpr uint32_t SSAO_NOISE_DIM = 8;
+  static constexpr float SSAO_RADIUS = 0.5f;
+
   SimpleRender(uint32_t a_width, uint32_t a_height);
   ~SimpleRender() override { Cleanup(); }
 
-  inline uint32_t     GetWidth()      const override { return m_width; }
-  inline uint32_t     GetHeight()     const override { return m_height; }
-  inline VkInstance   GetVkInstance() const override { return m_instance; }
+  uint32_t     GetWidth()      const override { return m_width; }
+  uint32_t     GetHeight()     const override { return m_height; }
+  VkInstance   GetVkInstance() const override { return m_instance; }
   void InitVulkan(const char** a_instanceExtensions, uint32_t a_instanceExtensionsCount, uint32_t a_deviceId) override;
 
   void InitPresentation(VkSurfaceKHR& a_surface) override;
@@ -213,6 +219,7 @@ protected:
   bool m_vsync = false;
   bool m_wireframe = false;
   bool m_landscapeShadows = false;
+  bool m_ssao = true;
   float m_sunAngle = 0.5f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
@@ -229,6 +236,10 @@ protected:
 
   VkRenderPass m_prePostFxRenderPass;
   vk_utils::VulkanImageMem m_fogImage;
+  vk_utils::VulkanImageMem m_ssaoImage;
+  vk_utils::VulkanImageMem m_ssaoNoise;
+  VkSampler m_noiseSampler;
+  VkBuffer m_ssaoKernel = VK_NULL_HANDLE;
 
   VkRenderPass m_postFxRenderPass;
   std::vector<VkFramebuffer> m_framebuffers;
@@ -236,6 +247,7 @@ protected:
   VkFramebuffer m_prePostFxFramebuffer;
   
   pipeline_data_t m_fogPipeline;
+  pipeline_data_t m_ssaoPipeline;
   pipeline_data_t m_postFxPipeline;
   
   VkDescriptorSet m_postFxDescriptorSet = VK_NULL_HANDLE;
@@ -243,6 +255,9 @@ protected:
   
   VkDescriptorSet m_fogDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_fogDescriptorSetLayout = VK_NULL_HANDLE;
+
+  VkDescriptorSet m_ssaoDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_ssaoDescriptorSetLayout = VK_NULL_HANDLE;
 
   void ClearPipeline(pipeline_data_t& pipeline);
   void ClearAllPipelines();
