@@ -38,6 +38,8 @@ struct UniformParams
   BOOL enableLandscapeShadows;
   BOOL enableSsao;
   uint postFxDownscaleFactor;
+  uint tonemappingMode;
+  float exposure;
 };
 
 #undef PAD

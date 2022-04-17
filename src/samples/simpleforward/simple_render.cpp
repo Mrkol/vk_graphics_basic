@@ -151,10 +151,10 @@ vk_utils::DescriptorMaker& SimpleRender::GetDescMaker()
   if(m_pBindings == nullptr)
   {
     std::vector<std::pair<VkDescriptorType, uint32_t> > dtypes = {
-      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5},
-      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
-      {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 4},
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 100},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 100},
+      {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 100},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100}
     };
     m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device, dtypes, 4 + /*max terrains*/ 10);
   }
@@ -693,6 +693,8 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.lightPos = float3(0, std::sin(m_sunAngle), std::cos(m_sunAngle))*10000;
   m_uniforms.enableLandscapeShadows = m_landscapeShadows;
   m_uniforms.enableSsao = m_ssao;
+  m_uniforms.tonemappingMode = static_cast<uint32_t>(m_tonemappingMode);
+  m_uniforms.exposure = m_exposure;
   memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
 }
 
@@ -1435,6 +1437,10 @@ void SimpleRender::SetupGUIElements()
     ImGui::Checkbox("Wireframe", &m_wireframe);
     ImGui::Checkbox("Landscape Shadows", &m_landscapeShadows);
     ImGui::Checkbox("Screenspace ambient occlusion", &m_ssao);
+
+    static const std::array tmNames{"None", "Reinhard", "Hable Filmic", "Exposure", "Approximate ACES"};
+    ImGui::Combo("Tone mapping", &m_tonemappingMode, tmNames.data(), static_cast<int>(tmNames.size()));
+    ImGui::SliderFloat("Exposure", &m_exposure, 0.0, 10.0);
     ImGui::SliderAngle("Sun", &m_sunAngle);
 
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
@@ -1678,7 +1684,7 @@ void SimpleRender::CreateGBuffer()
 
   m_gbuffer.resolved.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, m_width, m_height,
-    VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &m_gbuffer.resolved);
+    VK_FORMAT_R16G16B16A16_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &m_gbuffer.resolved);
 
 
   // Renderpass

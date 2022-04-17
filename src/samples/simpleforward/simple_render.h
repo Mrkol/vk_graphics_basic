@@ -220,6 +220,8 @@ protected:
   bool m_wireframe = false;
   bool m_landscapeShadows = false;
   bool m_ssao = true;
+  int m_tonemappingMode = 0;
+  float m_exposure = 1.0;
   float m_sunAngle = 0.5f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
