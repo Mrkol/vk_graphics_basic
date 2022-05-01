@@ -30,6 +30,14 @@ struct GBuffer
   VkRenderPass renderpass{VK_NULL_HANDLE};
 };
 
+struct SceneGeometryPipeline
+{
+  VkPipelineLayout layout;
+  VkPipeline pipeline;
+  VkPipeline shadow;
+  VkPipeline wireframe;
+};
+
 
 class SimpleRender : public IRender
 {
@@ -169,12 +177,11 @@ protected:
 
   VkSampler m_landscapeHeightmapSampler;
   
-  pipeline_data_t m_deferredPipeline {};
-  pipeline_data_t m_deferredLandscapePipeline {};
-  pipeline_data_t m_deferredGrassPipeline {};
+  SceneGeometryPipeline m_deferredPipeline {};
+  SceneGeometryPipeline m_deferredLandscapePipeline {};
+  SceneGeometryPipeline m_deferredGrassPipeline {};
   pipeline_data_t m_lightingPipeline {};
   pipeline_data_t m_globalLightingPipeline {};
-  pipeline_data_t m_deferredWireframePipeline {};
 
   pipeline_data_t m_cullingPipeline {};
   pipeline_data_t m_landscapeCullingPipeline {};
@@ -261,7 +268,15 @@ protected:
   VkDescriptorSet m_ssaoDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_ssaoDescriptorSetLayout = VK_NULL_HANDLE;
 
+  VkPipeline pickGeometryPipeline(const SceneGeometryPipeline& pipeline, bool depthOnly) const
+  {
+    if (depthOnly) return pipeline.shadow;
+    if (m_wireframe) return pipeline.wireframe;
+    return pipeline.pipeline;
+  }
+
   void ClearPipeline(pipeline_data_t& pipeline);
+  void ClearPipeline(SceneGeometryPipeline& pipeline);
   void ClearAllPipelines();
 
   void DrawFrameSimple();
@@ -272,9 +287,9 @@ protected:
   void RecordFrameCommandBuffer(VkCommandBuffer cmdBuff, uint32_t swapchainIdx);
   void RecordStaticMeshCulling(VkCommandBuffer cmdBuff);
   void RecordLandscapeCulling(VkCommandBuffer cmdBuff);
-  void RecordStaticMesheRendering(VkCommandBuffer a_cmdBuff);
-  void RecordLandscapeRendering(VkCommandBuffer a_cmdBuff);
-  void RecordGrassRendering(VkCommandBuffer a_cmdBuff);
+  void RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, bool depthOnly);
+  void RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, bool depthOnly);
+  void RecordGrassRendering(VkCommandBuffer a_cmdBuff, bool depthOnly);
   void RecordLightResolve(VkCommandBuffer a_cmdBuff);
 
   virtual void SetupStaticMeshPipeline();

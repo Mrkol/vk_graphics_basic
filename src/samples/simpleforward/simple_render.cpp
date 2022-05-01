@@ -156,7 +156,7 @@ vk_utils::DescriptorMaker& SimpleRender::GetDescMaker()
       {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 100},
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100}
     };
-    m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device, dtypes, 4 + /*max terrains*/ 10);
+    m_pBindings = std::make_unique<vk_utils::DescriptorMaker>(m_device, dtypes, 100);
   }
 
   return *m_pBindings;
@@ -173,14 +173,14 @@ void SimpleRender::SetupStaticMeshPipeline()
   bindings.BindBuffer(2, m_pScnMgr->GetInstanceMatricesBuffer());
   bindings.BindEnd(&m_graphicsDescriptorSet, &m_graphicsDescriptorSetLayout);    
   
-  auto make_deferred_pipeline = [this](const std::unordered_map<VkShaderStageFlagBits, std::string>& shader_paths)
+  auto make_deferred_pipeline = [this](std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths)
     {
       vk_utils::GraphicsPipelineMaker maker;
 
       maker.LoadShaders(m_device, shader_paths);
 
-      pipeline_data_t result;
-
+      SceneGeometryPipeline result;
+    
       result.layout = maker.MakeLayout(m_device,
         {m_graphicsDescriptorSetLayout}, sizeof(graphicsPushConsts));
 
@@ -196,7 +196,22 @@ void SimpleRender::SetupStaticMeshPipeline()
       maker.colorBlending.attachmentCount = static_cast<uint32_t>(cba_state.size());
       maker.colorBlending.pAttachments = cba_state.data();
 
-      result.pipeline = maker.MakePipeline(m_device, m_pScnMgr->GetPipelineVertexInputStateCreateInfo(),
+      auto vertexInputStateCreateInfo = m_pScnMgr->GetPipelineVertexInputStateCreateInfo();
+      
+      result.pipeline = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
+        m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+
+      shader_paths.erase(VK_SHADER_STAGE_FRAGMENT_BIT);
+      maker.LoadShaders(m_device, shader_paths);
+
+      result.shadow = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
+        m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+      
+      shader_paths.emplace(VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv");
+      shader_paths.emplace(VK_SHADER_STAGE_GEOMETRY_BIT, std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv");
+      maker.LoadShaders(m_device, shader_paths);
+
+      result.wireframe = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
         m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
 
       return result;
@@ -205,13 +220,6 @@ void SimpleRender::SetupStaticMeshPipeline()
   m_deferredPipeline = make_deferred_pipeline(
     std::unordered_map<VkShaderStageFlagBits, std::string> {
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_FRAGMENT_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_VERTEX_SHADER_PATH} + ".spv"}
-    });
-  
-  m_deferredWireframePipeline = make_deferred_pipeline(
-    std::unordered_map<VkShaderStageFlagBits, std::string> {
-      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_GEOMETRY_BIT, std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_VERTEX_SHADER_PATH} + ".spv"}
     });
 }
@@ -234,11 +242,11 @@ void SimpleRender::SetupLandscapePipeline()
     bindings.BindEnd(&m_landscapeDescriptorSets.emplace_back(), &m_landscapeDescriptorSetLayout);
   }
 
-  auto makeLandscapePipeline =
+  auto makeTessellationPipeline =
     [this](std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths,
       uint32_t controlPoints)
     {
-      pipeline_data_t result;
+      SceneGeometryPipeline result;
 
       vk_utils::GraphicsPipelineMaker maker;
 
@@ -246,7 +254,7 @@ void SimpleRender::SetupLandscapePipeline()
 
       result.layout = maker.MakeLayout(m_device,
         {m_landscapeDescriptorSetLayout}, sizeof(graphicsPushConsts));
-
+      
       maker.SetDefaultState(m_width, m_height);
       
       std::array<VkPipelineColorBlendAttachmentState, 3> cba_state;
@@ -304,20 +312,43 @@ void SimpleRender::SetupLandscapePipeline()
         .basePipelineHandle  = VK_NULL_HANDLE,
       };
 
-      VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
-        nullptr, &result.pipeline));
+      auto clearModules = [&maker, this]()
+        {
+          for (size_t i = 0; i < std::size(maker.shaderModules); ++i)
+          {
+            if(maker.shaderModules[i] != VK_NULL_HANDLE)
+              vkDestroyShaderModule(m_device, maker.shaderModules[i], VK_NULL_HANDLE);
+            maker.shaderModules[i] = VK_NULL_HANDLE;
+          }
+        };
 
-      for (size_t i = 0; i < shader_paths.size(); ++i)
-      {
-        if(maker.shaderModules[i] != VK_NULL_HANDLE)
-          vkDestroyShaderModule(m_device, maker.shaderModules[i], VK_NULL_HANDLE);
-        maker.shaderModules[i] = VK_NULL_HANDLE;
-      }
+      VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+        nullptr, &result.pipeline))
+      clearModules();
+
+
+      shader_paths.erase(VK_SHADER_STAGE_FRAGMENT_BIT);
+      maker.LoadShaders(m_device, shader_paths);
+      pipelineInfo.stageCount = shader_paths.size();
+
+      VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+        nullptr, &result.shadow))
+      clearModules();
+
+
+      shader_paths.emplace(VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv");
+      shader_paths.emplace(VK_SHADER_STAGE_GEOMETRY_BIT, std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv");
+      maker.LoadShaders(m_device, shader_paths);
+      pipelineInfo.stageCount = shader_paths.size();
+      
+      VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+        nullptr, &result.wireframe))
+      clearModules();
 
       return result;
     };
 
-  m_deferredLandscapePipeline = makeLandscapePipeline(
+  m_deferredLandscapePipeline = makeTessellationPipeline(
     {
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{DEFERRED_LANDSCAPE_TESC_SHADER_PATH} + ".spv"},
@@ -325,7 +356,7 @@ void SimpleRender::SetupLandscapePipeline()
       {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_LANDSCAPE_VERTEX_SHADER_PATH} + ".spv"}
     }, 4);
 
-  m_deferredGrassPipeline = makeLandscapePipeline(
+  m_deferredGrassPipeline = makeTessellationPipeline(
     {
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_GRASS_FRAGMENT_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{DEFERRED_GRASS_TESC_SHADER_PATH} + ".spv"},
@@ -855,17 +886,16 @@ void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff)
 }
 
 
-void SimpleRender::RecordStaticMesheRendering(VkCommandBuffer a_cmdBuff)
+void SimpleRender::RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
-  auto& deferredPipeline = m_wireframe ? m_deferredWireframePipeline : m_deferredPipeline;
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS,
+    pickGeometryPipeline(m_deferredPipeline, depthOnly));
 
-  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.pipeline);
-
-  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, deferredPipeline.layout, 0, 1,
+  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredPipeline.layout, 0, 1,
     &m_graphicsDescriptorSet, 0, VK_NULL_HANDLE);
 
-  const VkShaderStageFlags stageFlags = (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                                         | (m_wireframe ? VK_SHADER_STAGE_GEOMETRY_BIT : 0));
+  const VkShaderStageFlags stageFlags =
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
   VkDeviceSize zero_offset = 0u;
   VkBuffer vertexBuf = m_pScnMgr->GetVertexBuffer();
@@ -874,18 +904,19 @@ void SimpleRender::RecordStaticMesheRendering(VkCommandBuffer a_cmdBuff)
   vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &vertexBuf, &zero_offset);
   vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
 
-  vkCmdPushConstants(a_cmdBuff, deferredPipeline.layout, stageFlags, 0,
+  vkCmdPushConstants(a_cmdBuff, m_deferredPipeline.layout, stageFlags, 0,
     sizeof(graphicsPushConsts), &graphicsPushConsts);
 
   vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
 }
 
-void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff)
+void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
-  const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                                        | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+  const VkShaderStageFlags stageFlags =
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+      | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
-  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredLandscapePipeline.pipeline);
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, pickGeometryPipeline(m_deferredLandscapePipeline, depthOnly));
 
   vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout, stageFlags, 0,
     sizeof(graphicsPushConsts), &graphicsPushConsts);
@@ -900,12 +931,14 @@ void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff)
   }
 }
 
-void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff)
+void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
-  const VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                                        | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+  const VkShaderStageFlags stageFlags =
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+      | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
-  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_deferredGrassPipeline.pipeline);
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS,
+    pickGeometryPipeline(m_deferredGrassPipeline, depthOnly));
 
   vkCmdPushConstants(a_cmdBuff, m_deferredGrassPipeline.layout, stageFlags, 0,
     sizeof(graphicsPushConsts), &graphicsPushConsts);
@@ -994,11 +1027,11 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
     vkCmdBeginRenderPass(a_cmdBuff, &mainPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     {
       {
-        RecordStaticMesheRendering(a_cmdBuff);
+        RecordStaticMeshRendering(a_cmdBuff, false);
 
-        RecordLandscapeRendering(a_cmdBuff);
+        RecordLandscapeRendering(a_cmdBuff, false);
         
-        RecordGrassRendering(a_cmdBuff);
+        RecordGrassRendering(a_cmdBuff, false);
       }
 
       vkCmdNextSubpass(a_cmdBuff, VK_SUBPASS_CONTENTS_INLINE);
@@ -1111,7 +1144,6 @@ void SimpleRender::RecreateSwapChain()
   vkDeviceWaitIdle(m_device);
 
   ClearPipeline(m_deferredPipeline);
-  ClearPipeline(m_deferredWireframePipeline);
   ClearPipeline(m_deferredLandscapePipeline);
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
@@ -1328,10 +1360,8 @@ void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
   UpdateView();
 }
 
-void SimpleRender::ClearPipeline(pipeline_data_t &pipeline)
+void SimpleRender::ClearPipeline(pipeline_data_t& pipeline)
 {
-  // if we are recreating pipeline (for example, to reload shaders)
-  // we need to cleanup old pipeline
   if(pipeline.layout != VK_NULL_HANDLE)
   {
     vkDestroyPipelineLayout(m_device, pipeline.layout, nullptr);
@@ -1344,10 +1374,33 @@ void SimpleRender::ClearPipeline(pipeline_data_t &pipeline)
   }
 }
 
+void SimpleRender::ClearPipeline(SceneGeometryPipeline& pipeline)
+{
+  if(pipeline.layout != VK_NULL_HANDLE)
+  {
+    vkDestroyPipelineLayout(m_device, pipeline.layout, nullptr);
+    pipeline.layout = VK_NULL_HANDLE;
+  }
+  if(pipeline.pipeline != VK_NULL_HANDLE)
+  {
+    vkDestroyPipeline(m_device, pipeline.pipeline, nullptr);
+    pipeline.pipeline = VK_NULL_HANDLE;
+  }
+  if(pipeline.shadow != VK_NULL_HANDLE)
+  {
+    vkDestroyPipeline(m_device, pipeline.shadow, nullptr);
+    pipeline.shadow = VK_NULL_HANDLE;
+  }
+  if(pipeline.wireframe != VK_NULL_HANDLE)
+  {
+    vkDestroyPipeline(m_device, pipeline.wireframe, nullptr);
+    pipeline.wireframe = VK_NULL_HANDLE;
+  }
+}
+
 void SimpleRender::ClearAllPipelines()
 {
   ClearPipeline(m_deferredPipeline);
-  ClearPipeline(m_deferredWireframePipeline);
   ClearPipeline(m_deferredLandscapePipeline);
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
