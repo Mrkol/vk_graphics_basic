@@ -4,8 +4,6 @@
 
 #include "../common.h"
 #include "../perlin.glsl"
-// TODO: Remove this shit. It wrecks incapsulation.
-#include "../landscape_raymarch.glsl"
 
 
 
@@ -68,8 +66,6 @@ void main()
     const vec3 FOG_COLOR_IN_LIGHT = vec3(0.6, 0.6, 0.6);
     const vec3 FOG_COLOR_IN_SHADOW = vec3(0.1, 0.1, 0.1);
 
-    const mat4 lmInverse = inverse(landscapeInfo.modelMat);
-
 
     vec4 wCurrent = screenToWorld(fragPos, 0);
     float translucency = 1;
@@ -81,16 +77,7 @@ void main()
             break;
         }
 
-        const vec4 lmCur = lmInverse * wCurrent;
-        float shadow = 1.0;
-        if (0 <= lmCur.x && lmCur.x <= 1
-            && 0 <= lmCur.z && lmCur.z <= 1
-            && Params.enableLandscapeShadows)
-        {
-            shadow = landscapeShade(lmCur.xyz, Params.lightPos);
-        }
-
-        const vec3 curColor = shadow*FOG_COLOR_IN_LIGHT + (1 - shadow)*FOG_COLOR_IN_SHADOW;
+        const vec3 curColor = FOG_COLOR_IN_LIGHT;
 
         const float beersTerm = exp(-sq(fogDensity(wCurrent.xyz)*stepLen));
 

@@ -44,7 +44,6 @@ void main()
     const vec3 normal = subpassLoad(inNormal).xyz;
     const vec3 tangent = subpassLoad(inTangent).xyz;
     const vec3 albedo = subpassLoad(inAlbedo).rgb;
-    const float shade = subpassLoad(inAlbedo).a;
 
 
     const vec3 lightPosition = (params.mView * vec4(Params.lightPos, 1)).xyz;
@@ -69,5 +68,5 @@ void main()
 
     const vec3 ambient = vec3(0.2, 0.2, 0.2);
 
-    out_fragColor = vec4((ambient + diffuse*shade) * albedo, 0.5f);
+    out_fragColor = vec4((ambient + diffuse) * albedo, 0.5f);
 }

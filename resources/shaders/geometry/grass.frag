@@ -12,7 +12,6 @@ layout (location = 0) in VS_OUT
 } surf;
 
 layout (location = 3) flat in uint shadingModel;
-layout(location = 4) flat in float shadow;
 
 layout(binding = 0, set = 0) uniform AppData
 {
@@ -27,6 +26,6 @@ layout (location = 2) out vec4 outAlbedo;
 void main()
 {
     outNormal = vec4(surf.sNorm, float(shadingModel));
-    outTangent = vec4(surf.sTangent, 0.0);
-    outAlbedo = vec4(Params.baseColor, shadow);
+    outTangent = vec4(surf.sTangent, 0);
+    outAlbedo = vec4(Params.baseColor, 0);
 }

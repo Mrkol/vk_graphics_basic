@@ -3,7 +3,6 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "../common.h"
-#include "../landscape_raymarch.glsl"
 
 
 layout(push_constant) uniform params_t
@@ -32,6 +31,5 @@ void main()
 {
     outNormal = vec4(surf.cNorm, 0.0);
     outTangent = vec4(surf.cTangent, 0.0);
-    const float shadow = Params.enableLandscapeShadows ? landscapeShade(sampleHeightmap(surf.texCoord), Params.lightPos) : 1.f;
-    outAlbedo = vec4(Params.baseColor, shadow);
+    outAlbedo = vec4(Params.baseColor, 0);
 }
