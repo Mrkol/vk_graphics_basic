@@ -41,7 +41,6 @@ struct SceneGeometryPipeline
 
 class SimpleRender : public IRender
 {
-public:
   static constexpr char const* DEFERRED_VERTEX_SHADER_PATH = "../resources/shaders/geometry/static_mesh.vert";
   static constexpr char const* DEFERRED_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/static_mesh.frag";
 
@@ -78,7 +77,11 @@ public:
   static constexpr uint32_t SSAO_KERNEL_SIZE_BYTES = 4*sizeof(float)*SSAO_KERNEL_SIZE;
   static constexpr uint32_t SSAO_NOISE_DIM = 8;
   static constexpr float SSAO_RADIUS = 0.5f;
+  
+  static constexpr size_t SHADOW_MAP_CASCADE_COUNT = 4;
+  static constexpr size_t SHADOW_MAP_RESOLUTION = 2048;
 
+public:
   SimpleRender(uint32_t a_width, uint32_t a_height);
   ~SimpleRender() override { Cleanup(); }
 
@@ -187,17 +190,6 @@ protected:
     LiteMath::float4x4 view;
   } graphicsPushConsts;
 
-  struct
-  {
-    LiteMath::float4x4 projView;
-    uint32_t instanceCount;
-    uint32_t modelCount;
-  } cullingPushConsts;
-
-  struct
-  {
-    LiteMath::float4x4 projView;
-  } landscapeCullingPushConsts;
 
   UniformParams m_uniforms {};
   VkBuffer m_ubo = VK_NULL_HANDLE;
@@ -205,12 +197,6 @@ protected:
   VkDeviceMemory m_uboAlloc = VK_NULL_HANDLE;
   void* m_uboMappedMem = nullptr;
   void* m_shadowmapUboMappedMem = nullptr;
-  
-  VkBuffer m_indirectDrawBuffer = VK_NULL_HANDLE;
-  VkBuffer m_instanceMappingBuffer = VK_NULL_HANDLE;
-
-  VkBuffer m_landscapeIndirectDrawBuffer = VK_NULL_HANDLE;
-  std::vector<VkBuffer> m_landscapeTileBuffers;
 
   VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
   
@@ -229,14 +215,52 @@ protected:
   VkDescriptorSet m_graphicsDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_graphicsDescriptorSetLayout = VK_NULL_HANDLE;
 
-  std::vector<VkDescriptorSet> m_landscapeDescriptorSets;
-  VkDescriptorSetLayout m_landscapeDescriptorSetLayout = VK_NULL_HANDLE;
+  struct CullingPushConstants
+  {
+    LiteMath::float4x4 projView;
+    uint32_t instanceCount;
+    uint32_t modelCount;
+  };
 
-  VkDescriptorSet m_cullingDescriptorSet = VK_NULL_HANDLE;
-  VkDescriptorSetLayout m_cullingDescriptorSetLayout = VK_NULL_HANDLE;
+  struct LandscapeCullingPushConstants
+  {
+    LiteMath::float4x4 projView;
+  };
+  
+  struct VisibilityInfo
+  {
+    CullingPushConstants cullingPushConsts;
+    LandscapeCullingPushConstants landscapeCullingPushConsts;
 
-  std::vector<VkDescriptorSet> m_landscapeCullingDescriptorSets;
-  VkDescriptorSetLayout m_landscapeCullingDescriptorSetLayout = VK_NULL_HANDLE;
+    VkBuffer indirectDrawBuffer = VK_NULL_HANDLE;
+    VkBuffer instanceMappingBuffer = VK_NULL_HANDLE;
+    VkDescriptorSet cullingOutputDescriptorSet = VK_NULL_HANDLE;
+    VkDescriptorSet staticMeshVisDescSet = VK_NULL_HANDLE;
+
+    VkBuffer landscapeIndirectDrawBuffer = VK_NULL_HANDLE;
+    std::vector<VkBuffer> landscapeTileBuffers;
+    std::vector<VkDescriptorSet> landscapeCullingOutputDescriptorSets;
+    std::vector<VkDescriptorSet> landscapeVisDescSets;
+  };
+
+  VkDescriptorSetLayout m_landscapeVisibilityDescriptorSetLayout = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_graphicsVisibilityDescriptorSetLayout = VK_NULL_HANDLE;
+
+  VisibilityInfo m_mainVisInfo;
+  std::array<VisibilityInfo, SHADOW_MAP_CASCADE_COUNT> m_cascadeVisInfo;
+  std::vector<VisibilityInfo*> m_visibilityInfos;
+
+  VkDescriptorSet m_cullingSceneDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_cullingSceneDescriptorSetLayout = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_cullingOutputDescriptorSetLayout = VK_NULL_HANDLE;
+
+  std::vector<VkDescriptorSet> m_landscapeCullingSceneDescriptorSets;
+  VkDescriptorSetLayout m_landscapeCullingSceneDescriptorSetLayout = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_landscapeCullingOutputDescriptorSetLayout = VK_NULL_HANDLE;
+
+
+  std::vector<VkDescriptorSet> m_landscapeMainDescriotorSets;
+  VkDescriptorSetLayout m_landscapeMainDescriptorSetLayout = VK_NULL_HANDLE;
 
   VkDescriptorSet m_lightingDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_lightingDescriptorSetLayout = VK_NULL_HANDLE;
@@ -310,8 +334,7 @@ protected:
   VkDescriptorSet m_ssaoDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_ssaoDescriptorSetLayout = VK_NULL_HANDLE;
 
-  static constexpr size_t SHADOW_MAP_CASCADE_COUNT = 4;
-  static constexpr size_t SHADOW_MAP_RESOLUTION = 2048;
+
 
   struct ShadowmapUbo
   {
@@ -349,11 +372,13 @@ protected:
   void RecordShadowmapRendering(VkCommandBuffer cmdBuff);
 
   void RecordFrameCommandBuffer(VkCommandBuffer cmdBuff, uint32_t swapchainIdx);
-  void RecordStaticMeshCulling(VkCommandBuffer cmdBuff);
-  void RecordLandscapeCulling(VkCommandBuffer cmdBuff);
-  void RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, bool depthOnly);
-  void RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, bool depthOnly);
-  void RecordGrassRendering(VkCommandBuffer a_cmdBuff, bool depthOnly);
+
+  void RecordStaticMeshCulling(VkCommandBuffer cmdBuff, VisibilityInfo& visInfo);
+  void RecordLandscapeCulling(VkCommandBuffer cmdBuff, VisibilityInfo& visInfo);
+
+  void RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo, bool depthOnly);
+  void RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo, bool depthOnly);
+  void RecordGrassRendering(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo, bool depthOnly);
   void RecordLightResolve(VkCommandBuffer a_cmdBuff);
 
   virtual void SetupStaticMeshPipeline();

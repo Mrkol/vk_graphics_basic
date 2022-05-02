@@ -15,14 +15,14 @@ layout(push_constant) uniform params_t
     mat4 mView;
 } params;
 
-layout(binding = 1, set = 0) buffer InstanceMapping
-{
-    uint instanceMapping[];
-};
-
-layout(binding = 2, set = 0) buffer ModelMatrices
+layout(binding = 1, set = 0) buffer ModelMatrices
 {
     mat4 modelMatrices[];
+};
+
+layout(binding = 0, set = 1) buffer InstanceMapping
+{
+    uint instanceMapping[];
 };
 
 layout (location = 0 ) out VS_OUT

@@ -23,28 +23,18 @@ struct IndirectCall
     uint firstInstance;
 };
 
-layout(std430, binding = 0) buffer indirection_t
-{
-    IndirectCall indirections[];
-};
-
-layout(std430, binding = 1) buffer mapping_t
-{
-    uint mappings[];
-};
-
 struct InstanceInfo
 {
     uint modelId;
     uint doRender;
 };
 
-layout(std430, binding = 2) buffer instance_infos_t
+layout(std430, binding = 0, set = 0) buffer instance_infos_t
 {
     InstanceInfo instanceInfos[];
 };
 
-layout(std430, binding = 3) buffer instance_matrices_t
+layout(std430, binding = 1, set = 0) buffer instance_matrices_t
 {
     mat4 instanceMatrices[];
 };
@@ -57,9 +47,21 @@ struct ModelInfo
     float AABB[6];
 };
 
-layout(std430, binding = 4) buffer model_infos_t
+layout(std430, binding = 2, set = 0) buffer model_infos_t
 {
     ModelInfo modelInfos[];
+};
+
+
+
+layout(std430, binding = 0, set = 1) buffer indirection_t
+{
+    IndirectCall indirections[];
+};
+
+layout(std430, binding = 1, set = 1) buffer mapping_t
+{
+    uint mappings[];
 };
 
 // If there are more than 8K instances of a certain model, we are doomed

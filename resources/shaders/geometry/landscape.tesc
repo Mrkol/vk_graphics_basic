@@ -23,7 +23,7 @@ layout(binding = 2, set = 0) uniform LandscapeInfo
     uint grassDensity;
 } landscapeInfo;
 
-layout(std430, binding = 3) buffer tiles_t
+layout(std430, binding = 0, set = 1) buffer tiles_t
 {
     uint tiles[];
 };

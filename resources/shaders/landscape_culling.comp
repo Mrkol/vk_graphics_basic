@@ -22,21 +22,13 @@ struct IndirectCall
     uint firstInstance;
 };
 
-// Output: two inderect call structures, one for tile-based terrain rendering,
-// other for grass/bushes rendering with the appropriate density
-layout(std430, binding = 0) buffer indirection_t
-{
-    IndirectCall landscapeIndirection;
-    IndirectCall grassInderection;
-};
-
 // (minY, maxY) for each tile, tiled linearly
-layout(std430, binding = 1) buffer tileVerticalDims_t
+layout(std430, binding = 0, set = 0) buffer tileVerticalDims_t
 {
     vec2 tileVerticalDims[];
 };
 
-layout(binding = 2) uniform LandscapeInfo
+layout(binding = 1, set = 0) uniform LandscapeInfo
 {
     mat4 modelMat;
     // Heightmap's dimensions
@@ -48,8 +40,17 @@ layout(binding = 2) uniform LandscapeInfo
     uint grassDensity;
 } landscapeInfo;
 
+
+// Output: two inderect call structures, one for tile-based terrain rendering,
+// other for grass/bushes rendering with the appropriate density
+layout(std430, binding = 0, set = 1) buffer indirection_t
+{
+    IndirectCall landscapeIndirection;
+    IndirectCall grassInderection;
+};
+
 // Output: tile IDs tiled linearly. First element is the size.
-layout(std430, binding = 3) buffer tiles_t
+layout(std430, binding = 1, set = 1) buffer tiles_t
 {
     uint tiles[];
 };
