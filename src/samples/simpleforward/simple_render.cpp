@@ -298,8 +298,8 @@ void SimpleRender::SetupStaticMeshPipeline()
   
   m_deferredPipeline = make_deferred_pipeline(
     std::unordered_map<VkShaderStageFlagBits, std::string> {
-      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_FRAGMENT_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_VERTEX_SHADER_PATH} + ".spv"}
+      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WRITE_GBUF_FRAGMENT_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_VERTEX_BIT, std::string{STATIC_MESH_VERTEX_SHADER_PATH} + ".spv"}
     });
 }
 
@@ -442,18 +442,18 @@ void SimpleRender::SetupLandscapePipeline()
 
   m_deferredLandscapePipeline = makeTessellationPipeline(
     {
-      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{DEFERRED_LANDSCAPE_TESC_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, std::string{DEFERRED_LANDSCAPE_TESE_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_LANDSCAPE_VERTEX_SHADER_PATH} + ".spv"}
+      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WRITE_GBUF_FRAGMENT_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{LANDSCAPE_TESC_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, std::string{LANDSCAPE_TESE_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_VERTEX_BIT, std::string{LANDSCAPE_VERTEX_SHADER_PATH} + ".spv"}
     }, 4);
 
   m_deferredGrassPipeline = makeTessellationPipeline(
     {
-      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{DEFERRED_GRASS_FRAGMENT_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{DEFERRED_GRASS_TESC_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, std::string{DEFERRED_GRASS_TESE_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_VERTEX_BIT, std::string{DEFERRED_GRASS_VERTEX_SHADER_PATH} + ".spv"}
+      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WRITE_GBUF_FRAGMENT_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, std::string{GRASS_TESC_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, std::string{GRASS_TESE_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_VERTEX_BIT, std::string{GRASS_VERTEX_SHADER_PATH} + ".spv"}
     }, 3);
 }
 
@@ -2213,26 +2213,25 @@ void SimpleRender::ClearShadowmaps()
       fbuf = VK_NULL_HANDLE;
     }
   }
-  
-  for (auto& image : m_cascadeViews)
-  {
-    if (image != VK_NULL_HANDLE)
+
+  auto destroyViews = [this](std::span<VkImageView> views)
     {
-      vkDestroyImageView(m_device, image, nullptr);
-      image = VK_NULL_HANDLE;
-    }
-  }
+      for (auto& image : views)
+      {
+        if (image != VK_NULL_HANDLE)
+        {
+          vkDestroyImageView(m_device, image, nullptr);
+          image = VK_NULL_HANDLE;
+        }
+      }  
+    };
   
-  for (auto& image : m_vsmViews)
-  {
-    if (image != VK_NULL_HANDLE)
-    {
-      vkDestroyImageView(m_device, image, nullptr);
-      image = VK_NULL_HANDLE;
-    }
-  }
+  destroyViews(m_cascadeViews);
+  destroyViews(m_rsmNormalViews);
+  destroyViews(m_vsmViews);
   
   vk_utils::deleteImg(m_device, &m_shadowmap);
+  vk_utils::deleteImg(m_device, &m_rsmNormals);
   vk_utils::deleteImg(m_device, &m_vsm);
 }
 
@@ -2624,107 +2623,76 @@ void SimpleRender::CreatePostFx()
   }
 }
 
+void SimpleRender::CreateStackedTexture(vk_utils::VulkanImageMem& mem,
+  std::span<VkImageView, SHADOW_MAP_CASCADE_COUNT> cascadeViews,
+    VkFormat format, VkImageUsageFlags usage)
+{
+  VkImageCreateInfo imgInfo{
+    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+    .imageType = VK_IMAGE_TYPE_2D,
+    .format = format,
+    .extent = VkExtent3D{
+      .width = SHADOW_MAP_RESOLUTION,
+      .height = SHADOW_MAP_RESOLUTION,
+      .depth = 1,
+    },
+    .mipLevels = 1,
+    .arrayLayers = SHADOW_MAP_CASCADE_COUNT,
+    .samples = VK_SAMPLE_COUNT_1_BIT,
+    .tiling = VK_IMAGE_TILING_OPTIMAL,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT | usage,
+    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+  };
+
+  auto aspect = static_cast<VkImageAspectFlags>(vk_utils::isDepthFormat(format)
+    ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT);
+
+  VkImageViewCreateInfo viewInfo {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+    .format = format,
+    .subresourceRange = VkImageSubresourceRange{
+      .aspectMask = aspect,
+      .baseMipLevel = 0,
+      .levelCount = 1,
+      .baseArrayLayer = 0,
+      .layerCount = SHADOW_MAP_CASCADE_COUNT,
+    },
+  };
+  
+  vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION,
+    format, 0, &mem, &imgInfo, &viewInfo);
+
+  for (size_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; ++i)
+  {
+    VkImageViewCreateInfo info {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+      .image = mem.image,
+      .viewType = VK_IMAGE_VIEW_TYPE_2D,
+      .format = format,
+      .subresourceRange = VkImageSubresourceRange{
+        .aspectMask = aspect,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = static_cast<uint32_t>(i),
+        .layerCount = 1,
+      },
+    };
+    vkCreateImageView(m_device, &info, nullptr, &cascadeViews[i]);
+  }
+}
+
 void SimpleRender::CreateShadowmaps()
 {
   auto format = m_gbuffer.depth_stencil_layer.image.format;
+  auto rsmNormalsFormat = VK_FORMAT_R8G8B8A8_UNORM;
   auto vsmFormat = VK_FORMAT_R32G32_SFLOAT;
 
   {
-    {
-      VkImageCreateInfo imgInfo{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = m_gbuffer.depth_stencil_layer.image.format,
-        .extent = VkExtent3D{
-          .width = SHADOW_MAP_RESOLUTION,
-          .height = SHADOW_MAP_RESOLUTION,
-          .depth = 1,
-        },
-        .mipLevels = 1,
-        .arrayLayers = SHADOW_MAP_CASCADE_COUNT,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-      };
-      
-      VkImageViewCreateInfo viewInfo {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-        .format = format,
-        .subresourceRange = VkImageSubresourceRange{
-          .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-          .baseMipLevel = 0,
-          .levelCount = 1,
-          .baseArrayLayer = 0,
-          .layerCount = SHADOW_MAP_CASCADE_COUNT,
-        },
-      };
-      
-      vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION,
-        format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-          &m_shadowmap, &imgInfo, &viewInfo);
-    }
-    
-    {
-      VkImageCreateInfo imgInfo{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = vsmFormat,
-        .extent = VkExtent3D{
-          .width = SHADOW_MAP_RESOLUTION,
-          .height = SHADOW_MAP_RESOLUTION,
-          .depth = 1,
-        },
-        .mipLevels = 1,
-        .arrayLayers = SHADOW_MAP_CASCADE_COUNT,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-      };
-      
-      VkImageViewCreateInfo viewInfo {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-        .format = vsmFormat,
-        .subresourceRange = VkImageSubresourceRange{
-          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-          .baseMipLevel = 0,
-          .levelCount = 1,
-          .baseArrayLayer = 0,
-          .layerCount = SHADOW_MAP_CASCADE_COUNT,
-        },
-      };
-      
-      vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION,
-        format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-          &m_vsm, &imgInfo, &viewInfo);
-    }
-
-    for (size_t i = 0; i < m_cascadeViews.size(); ++i)
-    {
-      VkImageViewCreateInfo info {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = m_shadowmap.image,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = format,
-        .subresourceRange = VkImageSubresourceRange{
-          .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-          .baseMipLevel = 0,
-          .levelCount = 1,
-          .baseArrayLayer = static_cast<uint32_t>(i),
-          .layerCount = 1,
-        },
-      };
-      vkCreateImageView(m_device, &info, nullptr, &m_cascadeViews[i]);
-      info.image = m_vsm.image;
-      info.format = vsmFormat;
-      info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      vkCreateImageView(m_device, &info, nullptr, &m_vsmViews[i]);
-    }
+    CreateStackedTexture(m_shadowmap, m_cascadeViews, format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    CreateStackedTexture(m_rsmNormals, m_rsmNormalViews, rsmNormalsFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    CreateStackedTexture(m_vsm, m_vsmViews, vsmFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
   }
 
   {

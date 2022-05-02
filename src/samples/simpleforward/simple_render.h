@@ -7,12 +7,10 @@
 #include "../../render/render_common.h"
 #include "../../render/render_gui.h"
 #include "../../../resources/shaders/common.h"
-#include <geom/vk_mesh.h>
 #include <vk_descriptor_sets.h>
-#include <vk_fbuf_attachment.h>
 #include <vk_images.h>
 #include <vk_swapchain.h>
-#include <string>
+#include <span>
 #include <iostream>
 
 
@@ -41,18 +39,16 @@ struct SceneGeometryPipeline
 
 class SimpleRender : public IRender
 {
-  static constexpr char const* DEFERRED_VERTEX_SHADER_PATH = "../resources/shaders/geometry/static_mesh.vert";
-  static constexpr char const* DEFERRED_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/static_mesh.frag";
+  static constexpr char const* STATIC_MESH_VERTEX_SHADER_PATH = "../resources/shaders/geometry/static_mesh.vert";
+  static constexpr char const* WRITE_GBUF_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/write_gbuffer.frag";
 
-  static constexpr char const* DEFERRED_LANDSCAPE_VERTEX_SHADER_PATH = "../resources/shaders/geometry/landscape.vert";
-  static constexpr char const* DEFERRED_LANDSCAPE_TESC_SHADER_PATH = "../resources/shaders/geometry/landscape.tesc";
-  static constexpr char const* DEFERRED_LANDSCAPE_TESE_SHADER_PATH = "../resources/shaders/geometry/landscape.tese";
-  static constexpr char const* DEFERRED_LANDSCAPE_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/landscape.frag";
+  static constexpr char const* LANDSCAPE_VERTEX_SHADER_PATH = "../resources/shaders/geometry/landscape.vert";
+  static constexpr char const* LANDSCAPE_TESC_SHADER_PATH = "../resources/shaders/geometry/landscape.tesc";
+  static constexpr char const* LANDSCAPE_TESE_SHADER_PATH = "../resources/shaders/geometry/landscape.tese";
 
-  static constexpr char const* DEFERRED_GRASS_VERTEX_SHADER_PATH = "../resources/shaders/geometry/grass.vert";
-  static constexpr char const* DEFERRED_GRASS_TESC_SHADER_PATH = "../resources/shaders/geometry/grass.tesc";
-  static constexpr char const* DEFERRED_GRASS_TESE_SHADER_PATH = "../resources/shaders/geometry/grass.tese";
-  static constexpr char const* DEFERRED_GRASS_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/grass.frag";
+  static constexpr char const* GRASS_VERTEX_SHADER_PATH = "../resources/shaders/geometry/grass.vert";
+  static constexpr char const* GRASS_TESC_SHADER_PATH = "../resources/shaders/geometry/grass.tesc";
+  static constexpr char const* GRASS_TESE_SHADER_PATH = "../resources/shaders/geometry/grass.tese";
 
   static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting/lighting.vert";
   static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting/lighting.geom";
@@ -356,8 +352,11 @@ protected:
   ShadowmapUbo m_shadowmapUboData;
   
   vk_utils::VulkanImageMem m_shadowmap;
+  vk_utils::VulkanImageMem m_rsmNormals;
+  // variance shadow map (M1 and M2 of shadow)
   vk_utils::VulkanImageMem m_vsm;
   std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_cascadeViews;
+  std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_rsmNormalViews;
   std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_vsmViews;
   std::array<VkFramebuffer, SHADOW_MAP_CASCADE_COUNT> m_cascadeFramebuffers;
   std::array<VkFramebuffer, SHADOW_MAP_CASCADE_COUNT> m_vsmFramebuffers;
@@ -417,6 +416,11 @@ protected:
   void CreateGBuffer();
   void CreatePostFx();
   void CreateShadowmaps();
+
+  // for shadowmap resource
+  // TODO: refactor
+  void CreateStackedTexture(vk_utils::VulkanImageMem& mem,
+    std::span<VkImageView, SHADOW_MAP_CASCADE_COUNT> cascadeViews, VkFormat format, VkImageUsageFlags usage);
 };
 
 

@@ -40,6 +40,9 @@ layout (location = 0) out VS_OUT
     vec2 texCoord;
 } vOut;
 
+layout (location = 3) flat out uint outShadingModel;
+
+
 float calcHeight(vec2 pos)
 {
     return textureLod(heightmap, pos, 0).r + cnoise(pos * 800.f)*0.001f;
@@ -86,6 +89,7 @@ void main()
     vOut.cNorm    = normalize(mat3(normalModelView) * mNorm);
     vOut.cTangent = mat3(normalModelView) * mTang;
     vOut.texCoord = mPos2;
-    
+    outShadingModel = 0;
+
     gl_Position   = params.mProj * modelView * vec4(mPos, 1);
 }
