@@ -1,6 +1,9 @@
 #include "simple_render.h"
 
 #include <random>
+#include <tuple>
+#include <span>
+#include <type_traits>
 
 #include "../../utils/input_definitions.h"
 
@@ -8,10 +11,38 @@
 #include <vk_pipeline.h>
 #include <vk_buffers.h>
 
+#ifdef WIN32
+#undef max
+#undef min
+#endif
+
 
 static std::default_random_engine rndEngine;
 static std::uniform_real_distribution<float> randUNorm(0.0f, 1.0f);
 
+
+template<class... Ts>
+void makeSpecMap(const std::tuple<Ts...>& data,
+  std::span<VkSpecializationMapEntry, sizeof...(Ts)> map,
+  VkSpecializationInfo& info)
+{
+  [&]<size_t... Is>(std::index_sequence<Is...>) {
+    (...,
+      (map[Is] = VkSpecializationMapEntry{
+        Is,
+        static_cast<uint32_t>(
+          reinterpret_cast<const std::byte*>(std::addressof(std::get<Is>(data)))
+            - reinterpret_cast<const std::byte*>(std::addressof(data))),
+        sizeof(std::get<Is>(data))
+      }));
+  }(std::make_index_sequence<sizeof...(Ts)>{});
+  info = VkSpecializationInfo{
+    .mapEntryCount = static_cast<uint32_t>(map.size()),
+    .pMapEntries = map.data(),
+    .dataSize = sizeof(data),
+    .pData = std::addressof(data),
+  };
+}
 
 SimpleRender::SimpleRender(uint32_t a_width, uint32_t a_height) : m_width(a_width), m_height(a_height)
 {
@@ -43,6 +74,7 @@ void SimpleRender::SetupDeviceExtensions()
   m_deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   m_deviceExtensions.emplace_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
   m_deviceExtensions.emplace_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+  m_optionalDeviceExtensions.emplace_back(VK_EXT_DEBUG_MARKER_EXTENSION_NAME);
 }
 
 void SimpleRender::SetupValidationLayers()
@@ -84,6 +116,9 @@ void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_inst
   m_landscapeHeightmapSampler = vk_utils::createSampler(
     m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
     VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
+  m_shadowmapSampler = vk_utils::createSampler(
+    m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+    VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
   m_noiseSampler = vk_utils::createSampler(
     m_device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT,
     VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK);
@@ -110,6 +145,7 @@ void SimpleRender::InitPresentation(VkSurfaceKHR &a_surface)
 
   CreateGBuffer();
   CreatePostFx();
+  CreateShadowmaps();
 
   m_pGUIRender = std::make_unique<ImGuiRender>(m_instance, m_device, m_physicalDevice, m_queueFamilyIDXs.graphics, m_graphicsQueue, m_swapchain);
 }
@@ -136,8 +172,36 @@ void SimpleRender::CreateDevice(uint32_t a_deviceId)
   SetupDeviceExtensions();
   m_physicalDevice = vk_utils::findPhysicalDevice(m_instance, true, a_deviceId, m_deviceExtensions);
 
+  std::vector<const char*> extensions = m_deviceExtensions;
+  {
+    uint32_t extensionCount;
+    vkEnumerateDeviceExtensionProperties(m_physicalDevice, nullptr, &extensionCount, nullptr);
+
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(m_physicalDevice, nullptr, &extensionCount, availableExtensions.data());
+
+    for (auto optExt : m_optionalDeviceExtensions)
+    {
+      bool found = false;
+      for (auto ext : availableExtensions)
+      {
+        if (std::strcmp(optExt, ext.extensionName) == 0)
+        {
+          found = true;
+          break;
+        }
+      }
+      if (found)
+      {
+        std::cout << "Enabling optional extension " << optExt << std::endl;
+        extensions.emplace_back(optExt);
+      }
+    }
+
+  }
+
   SetupDeviceFeatures();
-  m_device = vk_utils::createLogicalDevice(m_physicalDevice, m_validationLayers, m_deviceExtensions,
+  m_device = vk_utils::createLogicalDevice(m_physicalDevice, m_validationLayers, extensions,
                                            m_enabledDeviceFeatures, m_queueFamilyIDXs,
                                            VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT,
                                            &m_enabledDeviceDescriptorIndexingFeatures);
@@ -205,7 +269,7 @@ void SimpleRender::SetupStaticMeshPipeline()
       maker.LoadShaders(m_device, shader_paths);
 
       result.shadow = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
-        m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+        m_shadowmapRenderPass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
       
       shader_paths.emplace(VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv");
       shader_paths.emplace(VK_SHADER_STAGE_GEOMETRY_BIT, std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv");
@@ -329,7 +393,8 @@ void SimpleRender::SetupLandscapePipeline()
 
       shader_paths.erase(VK_SHADER_STAGE_FRAGMENT_BIT);
       maker.LoadShaders(m_device, shader_paths);
-      pipelineInfo.stageCount = shader_paths.size();
+      pipelineInfo.stageCount = static_cast<uint32_t>(shader_paths.size());
+      pipelineInfo.renderPass = m_shadowmapRenderPass;
 
       VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
         nullptr, &result.shadow))
@@ -339,8 +404,9 @@ void SimpleRender::SetupLandscapePipeline()
       shader_paths.emplace(VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv");
       shader_paths.emplace(VK_SHADER_STAGE_GEOMETRY_BIT, std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv");
       maker.LoadShaders(m_device, shader_paths);
-      pipelineInfo.stageCount = shader_paths.size();
-      
+      pipelineInfo.stageCount = static_cast<uint32_t>(shader_paths.size());
+      pipelineInfo.renderPass = m_gbuffer.renderpass;
+
       VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
         nullptr, &result.wireframe))
       clearModules();
@@ -374,7 +440,6 @@ void SimpleRender::SetupLightingPipeline()
   bindings.BindBuffer(1, m_pScnMgr->GetLightsBuffer());
   bindings.BindEnd(&m_lightingDescriptorSet, &m_lightingDescriptorSetLayout);
 
-
   if (m_lightingFragmentDescriptorSetLayout == nullptr)
   {
     bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -386,6 +451,8 @@ void SimpleRender::SetupLightingPipeline()
       nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
     bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
       nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
+    bindings.BindImage(4, m_shadowmap.view, m_shadowmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindBuffer(5, m_shadowmapUbo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     bindings.BindEnd(&m_lightingFragmentDescriptorSet, &m_lightingFragmentDescriptorSetLayout);
   }
   else
@@ -411,6 +478,11 @@ void SimpleRender::SetupLightingPipeline()
         .imageView = m_gbuffer.depth_stencil_layer.image.view,
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
+      VkDescriptorImageInfo {
+        .sampler = m_shadowmapSampler,
+        .imageView = m_shadowmap.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
     };
 
     std::array<VkWriteDescriptorSet, image_infos.size()> writes;
@@ -426,6 +498,7 @@ void SimpleRender::SetupLightingPipeline()
         .pImageInfo = image_infos.data() + i
       };
     }
+    writes.back().descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
@@ -472,6 +545,22 @@ void SimpleRender::SetupLightingPipeline()
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"}
     });
+
+  
+  auto specData = std::tuple<uint32_t>(SHADOW_MAP_CASCADE_COUNT);
+  std::array<VkSpecializationMapEntry, 1> specMap;
+  VkSpecializationInfo specInfo;
+  makeSpecMap(specData, specMap, specInfo);
+
+  for (auto& info : maker.shaderStageInfos)
+  {
+    if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+    {
+      info.pSpecializationInfo = &specInfo;
+      break;
+    }
+  }
+
   m_globalLightingPipeline.layout = maker.MakeLayout(m_device,
     {m_lightingDescriptorSetLayout, m_lightingFragmentDescriptorSetLayout}, sizeof(graphicsPushConsts));
   
@@ -566,27 +655,17 @@ void SimpleRender::SetupPostfxPipeline()
         {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{SSAO_FRAGMENT_SHADER_PATH} + ".spv"},
     });
-
-    struct SpecializationData {
-      uint32_t kernelSize = SSAO_KERNEL_SIZE;
-      float radius = SSAO_RADIUS;
-    } specializationData;
-    std::array specializationMapEntries = {
-      VkSpecializationMapEntry{0, offsetof(SpecializationData, kernelSize), sizeof(SpecializationData::kernelSize)},
-      VkSpecializationMapEntry{1, offsetof(SpecializationData, radius), sizeof(SpecializationData::radius)},
-    };
-    VkSpecializationInfo specializationInfo{
-      .mapEntryCount = static_cast<uint32_t>(specializationMapEntries.size()),
-      .pMapEntries = specializationMapEntries.data(),
-      .dataSize = sizeof(specializationData),
-      .pData = &specializationData,
-    };
+    
+    auto specData = std::tuple<uint32_t, float>(SSAO_KERNEL_SIZE, SSAO_RADIUS);
+    std::array<VkSpecializationMapEntry, 2> specMap;
+    VkSpecializationInfo specInfo;
+    makeSpecMap(specData, specMap, specInfo);
 
     for (auto& info : maker.shaderStageInfos)
     {
       if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
       {
-        info.pSpecializationInfo = &specializationInfo;
+        info.pSpecializationInfo = &specInfo;
         break;
       }
     }
@@ -647,22 +726,33 @@ void SimpleRender::SetupCullingPipeline()
 
 void SimpleRender::CreateUniformBuffer()
 {
-  VkMemoryRequirements memReq;
-  m_ubo = vk_utils::createBuffer(m_device, sizeof(UniformParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &memReq);
-  
-  VkMemoryAllocateInfo allocateInfo = {};
-  allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  allocateInfo.pNext = nullptr;
-  allocateInfo.allocationSize = memReq.size;
-  allocateInfo.memoryTypeIndex = vk_utils::findMemoryType(memReq.memoryTypeBits,
-                                                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                                          m_physicalDevice);
+  VkMemoryRequirements memReq1;
+  VkMemoryRequirements memReq2;
+  m_ubo = vk_utils::createBuffer(m_device, sizeof(UniformParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &memReq1);
+  m_shadowmapUbo = vk_utils::createBuffer(m_device, sizeof(ShadowmapUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &memReq2);
+
+  if (memReq1.memoryTypeBits != memReq2.memoryTypeBits)
+  {
+    vk_utils::logWarning("UBOs have different mem reqs!");
+  }
+
+  auto offsets = vk_utils::calculateMemOffsets({memReq1, memReq2});
+
+  VkMemoryAllocateInfo allocateInfo{
+    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+    .allocationSize = offsets.back(),
+    .memoryTypeIndex =
+      vk_utils::findMemoryType(memReq1.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, m_physicalDevice)
+  };
+
   VK_CHECK_RESULT(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_uboAlloc));
 
-  VK_CHECK_RESULT(vkBindBufferMemory(m_device, m_ubo, m_uboAlloc, 0));
+  VK_CHECK_RESULT(vkBindBufferMemory(m_device, m_ubo, m_uboAlloc, offsets[0]))
+  VK_CHECK_RESULT(vkBindBufferMemory(m_device, m_shadowmapUbo, m_uboAlloc, offsets[1]))
 
-  vkMapMemory(m_device, m_uboAlloc, 0, sizeof(m_uniforms), 0, &m_uboMappedMem);
+  vkMapMemory(m_device, m_uboAlloc, offsets[0], sizeof(m_uniforms), 0, &m_uboMappedMem);
+  vkMapMemory(m_device, m_uboAlloc, offsets[1], sizeof(ShadowmapUbo), 0, &m_shadowmapUboMappedMem);
 
   m_uniforms.baseColor = LiteMath::float3(0.9f, 0.92f, 1.0f);
   m_uniforms.animateLightColor = false;
@@ -726,7 +816,8 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.enableSsao = m_ssao;
   m_uniforms.tonemappingMode = static_cast<uint32_t>(m_tonemappingMode);
   m_uniforms.exposure = m_exposure;
-  memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
+  std::memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
+  std::memcpy(m_shadowmapUboMappedMem, &m_shadowmapUboData, sizeof(m_shadowmapUboData));
 }
 
 void SimpleRender::RecordStaticMeshCulling(VkCommandBuffer a_cmdBuff)
@@ -904,22 +995,13 @@ void SimpleRender::RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, bool dep
   vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &vertexBuf, &zero_offset);
   vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
 
-  vkCmdPushConstants(a_cmdBuff, m_deferredPipeline.layout, stageFlags, 0,
-    sizeof(graphicsPushConsts), &graphicsPushConsts);
-
   vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
 }
 
 void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
-  const VkShaderStageFlags stageFlags =
-    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-      | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
   vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, pickGeometryPipeline(m_deferredLandscapePipeline, depthOnly));
-
-  vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout, stageFlags, 0,
-    sizeof(graphicsPushConsts), &graphicsPushConsts);
 
   for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
   {
@@ -933,16 +1015,9 @@ void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, bool dept
 
 void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
-  const VkShaderStageFlags stageFlags =
-    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-      | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
-
   vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS,
     pickGeometryPipeline(m_deferredGrassPipeline, depthOnly));
-
-  vkCmdPushConstants(a_cmdBuff, m_deferredGrassPipeline.layout, stageFlags, 0,
-    sizeof(graphicsPushConsts), &graphicsPushConsts);
-
+  
   for (size_t i = 0; i < m_landscapeDescriptorSets.size(); ++i)
   {
     std::vector<uint32_t> dynOffset{static_cast<uint32_t>(i*sizeof(LandscapeGpuInfo))};
@@ -975,6 +1050,50 @@ void SimpleRender::RecordLightResolve(VkCommandBuffer a_cmdBuff) {
   vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
 }
 
+void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
+{
+  vk_utils::setDefaultViewport(a_cmdBuff,
+      static_cast<float>(SHADOW_MAP_RESOLUTION), static_cast<float>(SHADOW_MAP_RESOLUTION));
+  vk_utils::setDefaultScissor(a_cmdBuff, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION);
+
+  for (size_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; ++i)
+  {
+    VkClearValue depthClear {
+      .depthStencil = {1.0f, 0}
+    };
+    VkRenderPassBeginInfo shadowPassInfo {
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+      .renderPass = m_shadowmapRenderPass,
+      .framebuffer = m_cascadeFramebuffers[i],
+      .renderArea = {
+        .offset = {0, 0},
+        .extent = {SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION},
+      },
+      .clearValueCount = 1,
+      .pClearValues = &depthClear,
+    };
+    vkCmdBeginRenderPass(a_cmdBuff, &shadowPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    {
+      vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+          | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+            0, sizeof(LiteMath::float4x4), &m_cascadeProjMats[i]);
+
+      vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+          | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+            sizeof(LiteMath::float4x4), sizeof(LiteMath::float4x4), &m_cascadeViewMats[i]);
+
+      RecordStaticMeshRendering(a_cmdBuff, true);
+
+      RecordLandscapeRendering(a_cmdBuff, true);
+      
+      RecordGrassRendering(a_cmdBuff, true);
+    }
+    vkCmdEndRenderPass(a_cmdBuff);
+  }
+}
+
 void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t swapchainIdx)
 {
   vkResetCommandBuffer(a_cmdBuff, 0);
@@ -988,7 +1107,8 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
 
   RecordStaticMeshCulling(a_cmdBuff);
   RecordLandscapeCulling(a_cmdBuff);
-
+  
+  RecordShadowmapRendering(a_cmdBuff);
 
   vk_utils::setDefaultViewport(a_cmdBuff, static_cast<float>(m_width), static_cast<float>(m_height));
   vk_utils::setDefaultScissor(a_cmdBuff, m_width, m_height);
@@ -1026,6 +1146,10 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
 
     vkCmdBeginRenderPass(a_cmdBuff, &mainPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     {
+      vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+          | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, 0,
+            sizeof(graphicsPushConsts), &graphicsPushConsts);
       {
         RecordStaticMeshRendering(a_cmdBuff, false);
 
@@ -1135,6 +1259,7 @@ void SimpleRender::CleanupPipelineAndSwapchain()
 
   ClearGBuffer();
   ClearPostFx();
+  ClearShadowmaps();
 
   m_swapchain.Cleanup();
 }
@@ -1159,6 +1284,7 @@ void SimpleRender::RecreateSwapChain()
 
   CreateGBuffer();
   CreatePostFx();
+  CreateShadowmaps();
   SetupStaticMeshPipeline();
   SetupLandscapePipeline();
   SetupLightingPipeline();
@@ -1195,6 +1321,12 @@ void SimpleRender::Cleanup()
     m_landscapeHeightmapSampler = VK_NULL_HANDLE;
   }
 
+  if (m_shadowmapSampler != VK_NULL_HANDLE)
+  {
+    vkDestroySampler(m_device, m_shadowmapSampler, nullptr);
+    m_shadowmapSampler = nullptr;
+  }
+
   if (m_noiseSampler != VK_NULL_HANDLE)
   {
     vkDestroySampler(m_device, m_noiseSampler, nullptr);
@@ -1224,6 +1356,12 @@ void SimpleRender::Cleanup()
   {
     vkDestroyBuffer(m_device, m_ubo, nullptr);
     m_ubo = VK_NULL_HANDLE;
+  }
+
+  if (m_shadowmapUbo != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_shadowmapUbo, nullptr);
+    m_shadowmapUbo = VK_NULL_HANDLE;
   }
 
   if (m_ssaoKernel != VK_NULL_HANDLE)
@@ -1325,14 +1463,102 @@ void SimpleRender::UpdateCamera(const Camera* cams, uint32_t a_camsCount)
 void SimpleRender::UpdateView()
 {
   const float aspect   = float(m_width) / float(m_height);
-  auto mProjFix        = OpenglToVulkanProjectionMatrixFix();
-  auto mProj           = projectionMatrix(m_cam.fov, aspect, 0.1f, 1000.0f);
-  auto mLookAt         = LiteMath::lookAt(m_cam.pos, m_cam.lookAt, m_cam.up);
-  auto mWorldViewProj  = mProjFix * mProj * mLookAt;
+  const float nearClip = 0.1f;
+  const float farClip = 500.0f;
+  const auto mProjFix        = OpenglToVulkanProjectionMatrixFix();
+  const auto mProj           = projectionMatrix(m_cam.fov, aspect, nearClip, farClip);
+  const auto mLookAt         = LiteMath::lookAt(m_cam.pos, m_cam.lookAt, m_cam.up);
+  const auto mWorldViewProj  = mProjFix * mProj * mLookAt;
   graphicsPushConsts.proj = mProjFix * mProj;
   graphicsPushConsts.view = mLookAt;
   cullingPushConsts.projView = mWorldViewProj;
   landscapeCullingPushConsts.projView = mWorldViewProj;
+
+  {
+    const auto lightDir = normalize(-10000*float3(0, std::sin(m_sunAngle), std::cos(m_sunAngle)));
+    const float clipRange = farClip - nearClip;
+
+    const float minZ = nearClip;
+    const float maxZ = nearClip + clipRange;
+
+    const float range = maxZ - minZ;
+    const float ratio = maxZ / minZ;
+
+    std::array<float, SHADOW_MAP_CASCADE_COUNT> cascadeSplits;
+
+    // Calculate split depths based on view camera frustum
+    // Based on method presented in https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
+    for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
+      const float p = (i + 1) / static_cast<float>(SHADOW_MAP_CASCADE_COUNT);
+      const float log = minZ * std::pow(ratio, p);
+      const float uniform = minZ + range * p;
+      const float d = m_cascadeSplitLambda * (log - uniform) + uniform;
+      cascadeSplits[i] = (d - nearClip) / clipRange;
+    }
+
+    float lastSplitDist = 0.0;
+		for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++)
+		{
+			const float splitDist = cascadeSplits[i];
+
+			std::array frustumCorners {
+				float3(-1.0f,  1.0f,  0.0f),
+				float3( 1.0f,  1.0f,  0.0f),
+				float3( 1.0f, -1.0f,  0.0f),
+				float3(-1.0f, -1.0f,  0.0f),
+				float3(-1.0f,  1.0f,  1.0f),
+				float3( 1.0f,  1.0f,  1.0f),
+				float3( 1.0f, -1.0f,  1.0f),
+				float3(-1.0f, -1.0f,  1.0f),
+			};
+
+			// Project frustum corners into world space
+			const auto invCam = LiteMath::inverse4x4(mWorldViewProj);
+			for (auto& corner : frustumCorners) {
+				auto invCorner = invCam * float4(corner.x, corner.y, corner.z, 1.0f);
+				corner = float3(invCorner.x, invCorner.y, invCorner.z) / invCorner.w;
+			}
+
+			for (size_t j = 0; j < 4; j++) {
+				auto dist = frustumCorners[j + 4] - frustumCorners[j];
+				frustumCorners[j + 4] = frustumCorners[j] + (dist * splitDist);
+				frustumCorners[j] = frustumCorners[j] + (dist * lastSplitDist);
+			}
+
+			// Get frustum center
+			auto frustumCenter = float3(0.0f);
+			for (auto& corner : frustumCorners) {
+				frustumCenter += corner;
+			}
+			frustumCenter /= 8.0f;
+
+			float radius = 0.0f;
+			for (uint32_t j = 0; j < 8; j++) {
+				float distance = length(frustumCorners[j] - frustumCenter);
+				radius = std::max(radius, distance);
+			}
+			radius = std::ceil(radius * 16.0f) / 16.0f;
+
+			const auto maxExtents = float3(radius);
+			const auto minExtents = float3(0,0,0) - maxExtents;
+
+			const auto lightViewMatrix =
+        LiteMath::lookAt(frustumCenter - lightDir * -minExtents.z, frustumCenter, float3(0.0f, 1.0f, 0.0f));
+			const auto lightOrthoMatrix =
+        ortoMatrix(minExtents.x, maxExtents.x, minExtents.y, maxExtents.y, 0.0f, maxExtents.z - minExtents.z);
+
+			// Store split distance and matrix in cascade
+
+			m_cascadeViewMats[i] = lightViewMatrix;
+			m_cascadeProjMats[i] = mProjFix * lightOrthoMatrix;
+
+      m_shadowmapUboData.cascadeViewProjMats[i] = mProjFix * lightOrthoMatrix * lightViewMatrix;
+      m_shadowmapUboData.cascadeSplitDepths[i] = (nearClip + splitDist * clipRange) * -1.0f;
+
+			lastSplitDist = cascadeSplits[i];
+		}
+  }
+
 
   // TODO: should this really be here?
   cullingPushConsts.instanceCount = m_pScnMgr->InstancesNum();
@@ -1679,6 +1905,35 @@ void SimpleRender::ClearPostFx()
   vk_utils::deleteImg(m_device, &m_ssaoNoise);
 }
 
+void SimpleRender::ClearShadowmaps()
+{
+  if (m_shadowmapRenderPass != VK_NULL_HANDLE)
+  {
+    vkDestroyRenderPass(m_device, m_shadowmapRenderPass, nullptr);
+    m_shadowmapRenderPass = VK_NULL_HANDLE;
+  }
+
+  for (auto& fbuf : m_cascadeFramebuffers)
+  {
+    if (fbuf != VK_NULL_HANDLE)
+    {
+      vkDestroyFramebuffer(m_device, fbuf, nullptr);
+      fbuf = VK_NULL_HANDLE;
+    }
+  }
+  
+  for (auto& image : m_cascadeViews)
+  {
+    if (image != VK_NULL_HANDLE)
+    {
+      vkDestroyImageView(m_device, image, nullptr);
+      image = VK_NULL_HANDLE;
+    }
+  }
+  
+  vk_utils::deleteImg(m_device, &m_shadowmap);
+}
+
 void SimpleRender::CreateGBuffer()
 {
   auto makeLayer = [this](VkFormat format, VkImageUsageFlagBits usage)
@@ -1844,7 +2099,9 @@ void SimpleRender::CreateGBuffer()
       .pDependencies = dependencies.data(),
     };
 
-    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_gbuffer.renderpass));
+    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_gbuffer.renderpass))
+
+    setObjectName(m_gbuffer.renderpass, VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT, "Build g-buffer RP");
   }
 
   // Framebuffer
@@ -1958,7 +2215,9 @@ void SimpleRender::CreatePostFx()
       .pDependencies = dependencies.data(),
     };
 
-    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_prePostFxRenderPass));
+    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_prePostFxRenderPass))
+
+    setObjectName(m_prePostFxRenderPass, VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT, "Pre-postfx RP");
   }
 
   // Post fx apply renderpass
@@ -2015,7 +2274,9 @@ void SimpleRender::CreatePostFx()
       .pDependencies = dependencies.data(),
     };
 
-    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_postFxRenderPass));
+    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_postFxRenderPass))
+    
+    setObjectName(m_postFxRenderPass, VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT, "Postfx RP");
   }
 
   // Framebuffer
@@ -2057,6 +2318,131 @@ void SimpleRender::CreatePostFx()
       .layers = 1,
     };
 
-    VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_prePostFxFramebuffer));
+    VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_prePostFxFramebuffer))
+  }
+}
+
+void SimpleRender::CreateShadowmaps()
+{
+  auto format = m_gbuffer.depth_stencil_layer.image.format;
+
+  {
+
+    VkImageCreateInfo imgInfo{
+      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+      .imageType = VK_IMAGE_TYPE_2D,
+      .format = m_gbuffer.depth_stencil_layer.image.format,
+      .extent = VkExtent3D{
+        .width = SHADOW_MAP_RESOLUTION,
+        .height = SHADOW_MAP_RESOLUTION,
+        .depth = 1,
+      },
+      .mipLevels = 1,
+      .arrayLayers = SHADOW_MAP_CASCADE_COUNT,
+      .samples = VK_SAMPLE_COUNT_1_BIT,
+      .tiling = VK_IMAGE_TILING_OPTIMAL,
+      .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+      .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    
+    VkImageViewCreateInfo viewInfo {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+      .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+      .format = format,
+      .subresourceRange = VkImageSubresourceRange{
+        .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = SHADOW_MAP_CASCADE_COUNT,
+      },
+    };
+    
+    vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION,
+      format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        &m_shadowmap, &imgInfo, &viewInfo);
+    
+    for (size_t i = 0; i < m_cascadeViews.size(); ++i)
+    {
+      VkImageViewCreateInfo info {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = m_shadowmap.image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .subresourceRange = VkImageSubresourceRange{
+          .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+          .baseMipLevel = 0,
+          .levelCount = 1,
+          .baseArrayLayer = static_cast<uint32_t>(i),
+          .layerCount = 1,
+        },
+      };
+      vkCreateImageView(m_device, &info, nullptr, &m_cascadeViews[i]);
+    }
+  }
+
+  {
+    std::array attachmentDescs{
+      VkAttachmentDescription{
+        .format = format,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+    };
+
+    VkAttachmentReference depthAttachmentRef{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    
+    std::array subpasses {
+      VkSubpassDescription {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .pDepthStencilAttachment = &depthAttachmentRef,
+      },
+    };
+    
+    std::array dependencies {
+      VkSubpassDependency {
+        .srcSubpass = 0,
+        .dstSubpass = VK_SUBPASS_EXTERNAL,
+        .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+      },
+    };
+
+    VkRenderPassCreateInfo renderPassInfo {
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+      .attachmentCount = static_cast<uint32_t>(attachmentDescs.size()),
+      .pAttachments = attachmentDescs.data(),
+      .subpassCount = static_cast<uint32_t>(subpasses.size()),
+      .pSubpasses = subpasses.data(),
+      .dependencyCount = static_cast<uint32_t>(dependencies.size()),
+      .pDependencies = dependencies.data(),
+    };
+
+    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_shadowmapRenderPass))
+
+    setObjectName(m_shadowmapRenderPass, VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT, "Shadowmap RP");
+  }
+
+  for (size_t i = 0; i < m_cascadeViews.size(); ++i)
+  {
+    VkFramebufferCreateInfo fbufInfo{
+      .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+      .renderPass = m_shadowmapRenderPass,
+      .attachmentCount = 1,
+      .pAttachments = &m_cascadeViews[i],
+      .width = SHADOW_MAP_RESOLUTION,
+      .height = SHADOW_MAP_RESOLUTION,
+      .layers = 1,
+    };
+    vkCreateFramebuffer(m_device, &fbufInfo, nullptr, &m_cascadeFramebuffers[i]);
   }
 }

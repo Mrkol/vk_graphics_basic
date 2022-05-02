@@ -105,7 +105,7 @@ void main()
       color *= occlusion;
     }
 
-    color = fog.a*color + (1 - fog.a)*fog.rgb;
+    color = fog.a*color + fog.rgb;
 
     switch (Params.tonemappingMode)
     {

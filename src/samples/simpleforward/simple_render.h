@@ -101,6 +101,22 @@ public:
 
   // debugging utils
   //
+  
+  template<class T>
+  void setObjectName(T handle, VkDebugReportObjectTypeEXT type, const char* name)
+  {
+    if (vkDebugMarkerSetObjectNameEXT != nullptr)
+    {
+		  VkDebugMarkerObjectNameInfoEXT nameInfo{
+		    .sType = VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT,
+		    .objectType = type,
+		    .object = reinterpret_cast<uint64_t>(handle),
+		    .pObjectName = name,
+		  };
+		  vkDebugMarkerSetObjectNameEXT(m_device, &nameInfo);
+    }
+  }
+
   static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
     VkDebugReportFlagsEXT                       flags,
     VkDebugReportObjectTypeEXT                  objectType,
@@ -122,8 +138,8 @@ public:
   }
 
   VkDebugReportCallbackEXT m_debugReportCallback = nullptr;
-protected:
 
+protected:
   VkInstance       m_instance       = VK_NULL_HANDLE;
   VkCommandPool    m_commandPool    = VK_NULL_HANDLE;
   VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
@@ -164,8 +180,10 @@ protected:
 
   UniformParams m_uniforms {};
   VkBuffer m_ubo = VK_NULL_HANDLE;
+  VkBuffer m_shadowmapUbo = VK_NULL_HANDLE;
   VkDeviceMemory m_uboAlloc = VK_NULL_HANDLE;
   void* m_uboMappedMem = nullptr;
+  void* m_shadowmapUboMappedMem = nullptr;
   
   VkBuffer m_indirectDrawBuffer = VK_NULL_HANDLE;
   VkBuffer m_instanceMappingBuffer = VK_NULL_HANDLE;
@@ -174,8 +192,9 @@ protected:
   std::vector<VkBuffer> m_landscapeTileBuffers;
 
   VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
-
+  
   VkSampler m_landscapeHeightmapSampler;
+  VkSampler m_shadowmapSampler;
   
   SceneGeometryPipeline m_deferredPipeline {};
   SceneGeometryPipeline m_deferredLandscapePipeline {};
@@ -230,10 +249,12 @@ protected:
   int m_tonemappingMode = 0;
   float m_exposure = 1.0;
   float m_sunAngle = 0.5f;
+  float m_cascadeSplitLambda = 0.95f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
   VkPhysicalDeviceDescriptorIndexingFeatures m_enabledDeviceDescriptorIndexingFeatures = {};
   std::vector<const char*> m_deviceExtensions      = {};
+  std::vector<const char*> m_optionalDeviceExtensions = {};
   std::vector<const char*> m_instanceExtensions    = {};
 
   bool m_enableValidation;
@@ -268,6 +289,26 @@ protected:
   VkDescriptorSet m_ssaoDescriptorSet = VK_NULL_HANDLE;
   VkDescriptorSetLayout m_ssaoDescriptorSetLayout = VK_NULL_HANDLE;
 
+  static constexpr size_t SHADOW_MAP_CASCADE_COUNT = 4;
+  static constexpr size_t SHADOW_MAP_RESOLUTION = 2048;
+
+  struct ShadowmapUbo
+  {
+    std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMats;
+    std::array<float, SHADOW_MAP_CASCADE_COUNT> cascadeSplitDepths;
+  };
+
+  std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> m_cascadeViewMats;
+  std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> m_cascadeProjMats;
+
+  ShadowmapUbo m_shadowmapUboData;
+
+  vk_utils::VulkanImageMem m_shadowmap;
+  std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_cascadeViews;
+  std::array<VkFramebuffer, SHADOW_MAP_CASCADE_COUNT> m_cascadeFramebuffers;
+  VkRenderPass m_shadowmapRenderPass;
+
+
   VkPipeline pickGeometryPipeline(const SceneGeometryPipeline& pipeline, bool depthOnly) const
   {
     if (depthOnly) return pipeline.shadow;
@@ -283,6 +324,8 @@ protected:
 
   void CreateInstance();
   void CreateDevice(uint32_t a_deviceId);
+
+  void RecordShadowmapRendering(VkCommandBuffer cmdBuff);
 
   void RecordFrameCommandBuffer(VkCommandBuffer cmdBuff, uint32_t swapchainIdx);
   void RecordStaticMeshCulling(VkCommandBuffer cmdBuff);
@@ -311,8 +354,11 @@ protected:
 
   void ClearGBuffer();
   void ClearPostFx();
+  void ClearShadowmaps();
+
   void CreateGBuffer();
   void CreatePostFx();
+  void CreateShadowmaps();
 };
 
 
