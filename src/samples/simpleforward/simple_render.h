@@ -62,6 +62,8 @@ class SimpleRender : public IRender
   static constexpr char const* FOG_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/fog.frag";
   static constexpr char const* SSAO_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/ssao.frag";
   static constexpr char const* POSTFX_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/postfx.frag";
+  
+  static constexpr char const* VSM_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/vsm.frag";
 
   static constexpr char const* FULLSCREEN_QUAD3_VERTEX_SHADER_PATH = "../resources/shaders/quad3_vert.vert";
 
@@ -80,6 +82,8 @@ class SimpleRender : public IRender
   
   static constexpr size_t SHADOW_MAP_CASCADE_COUNT = 4;
   static constexpr size_t SHADOW_MAP_RESOLUTION = 2048;
+
+  static constexpr uint32_t VSM_BLUR_RADIUS = 3;
 
 public:
   SimpleRender(uint32_t a_width, uint32_t a_height);
@@ -208,6 +212,7 @@ protected:
   SceneGeometryPipeline m_deferredGrassPipeline {};
   pipeline_data_t m_lightingPipeline {};
   pipeline_data_t m_globalLightingPipeline {};
+  pipeline_data_t m_vsmPipeline {};
 
   pipeline_data_t m_cullingPipeline {};
   pipeline_data_t m_landscapeCullingPipeline {};
@@ -291,7 +296,7 @@ protected:
   bool m_wireframe = false;
   bool m_landscapeShadows = false;
   bool m_ssao = true;
-  int m_tonemappingMode = 0;
+  int m_tonemappingMode = 2;
   float m_exposure = 1.0;
   float m_sunAngle = 0.5f;
   float m_cascadeSplitLambda = 0.95f;
@@ -344,13 +349,20 @@ protected:
 
   std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> m_cascadeViewMats;
   std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> m_cascadeProjMats;
+  
+  std::array<VkDescriptorSet, SHADOW_MAP_CASCADE_COUNT> m_vsmDescriptorSets;
+  VkDescriptorSetLayout m_vsmDescriptorSetLayout = VK_NULL_HANDLE;
 
   ShadowmapUbo m_shadowmapUboData;
-
+  
   vk_utils::VulkanImageMem m_shadowmap;
+  vk_utils::VulkanImageMem m_vsm;
   std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_cascadeViews;
+  std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_vsmViews;
   std::array<VkFramebuffer, SHADOW_MAP_CASCADE_COUNT> m_cascadeFramebuffers;
+  std::array<VkFramebuffer, SHADOW_MAP_CASCADE_COUNT> m_vsmFramebuffers;
   VkRenderPass m_shadowmapRenderPass;
+  VkRenderPass m_vsmRenderPass;
 
 
   VkPipeline pickGeometryPipeline(const SceneGeometryPipeline& pipeline, bool depthOnly) const

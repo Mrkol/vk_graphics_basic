@@ -217,7 +217,7 @@ void SceneManager::AddLandscape()
       auto& pixel = heights[i*width + j];
       for (auto o : octaves)
       {
-        pixel += perlin(
+        pixel += .5f * perlin(
           10*o + static_cast<float>(i)/height*o,
           10*o + static_cast<float>(j)/width*o) / o;
       }

@@ -5,6 +5,7 @@
 #include "../common.h"
 #include "../perlin.glsl"
 
+#include "../shadowmap.glsl"
 
 
 layout(push_constant) uniform params_t
@@ -18,7 +19,7 @@ layout(binding = 0, set = 0) uniform AppData
     UniformParams Params;
 };
 
-layout(binding = 3, set = 0) uniform sampler2D inDepth;
+layout(binding = 1, set = 0) uniform sampler2D inDepth;
 
 // For compat with quad3_vert
 layout (location = 0) in FS_IN { vec2 texCoord; } vIn;
@@ -41,7 +42,7 @@ vec4 screenToWorld(vec2 pos, float depth)
 float fogDensity(vec3 pos)
 {
     const float MAX_FOG_DEPTH = -200;
-    const float MIN_FOG_DEPTH = -50;
+    const float MIN_FOG_DEPTH = -20;
     const float MAX_FOG = 0.3;
 
     const float base = clamp((MIN_FOG_DEPTH - pos.y)/(MIN_FOG_DEPTH - MAX_FOG_DEPTH), 0, 1)*MAX_FOG;
@@ -76,8 +77,10 @@ void main()
         {
             break;
         }
-
-        const vec3 curColor = FOG_COLOR_IN_LIGHT;
+        
+        const vec4 cCurrent = params.mView * wCurrent;
+        const float shadow = shade(wCurrent.xyz, cascadeForDepth(cCurrent.z));
+        const vec3 curColor = shadow*FOG_COLOR_IN_LIGHT + (1-shadow)*FOG_COLOR_IN_SHADOW;
 
         const float beersTerm = exp(-sq(fogDensity(wCurrent.xyz)*stepLen));
 

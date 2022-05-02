@@ -20,6 +20,4 @@ vec3 DecodeNormal(uint a_data)
   return vec3(x, y, z);
 }
 
-
-
 #endif// CHIMERA_UNPACK_ATTRIBUTES_H

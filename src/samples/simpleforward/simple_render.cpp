@@ -124,7 +124,7 @@ void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_inst
     m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
     VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
   m_shadowmapSampler = vk_utils::createSampler(
-    m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+    m_device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
     VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
   m_noiseSampler = vk_utils::createSampler(
     m_device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT,
@@ -477,7 +477,7 @@ void SimpleRender::SetupLightingPipeline()
       nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
     bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
       nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
-    bindings.BindImage(4, m_shadowmap.view, m_shadowmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(4, m_vsm.view, m_shadowmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     bindings.BindBuffer(5, m_shadowmapUbo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     bindings.BindEnd(&m_lightingFragmentDescriptorSet, &m_lightingFragmentDescriptorSetLayout);
   }
@@ -506,7 +506,7 @@ void SimpleRender::SetupLightingPipeline()
       },
       VkDescriptorImageInfo {
         .sampler = m_shadowmapSampler,
-        .imageView = m_shadowmap.view,
+        .imageView = m_vsm.view,
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
     };
@@ -592,50 +592,178 @@ void SimpleRender::SetupLightingPipeline()
   
   m_globalLightingPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput,
     m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_TList(), 1);
+
+  
+  maker.SetDefaultState(SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION);
+  
+  maker.LoadShaders(m_device,
+      {{VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"},
+        {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{VSM_FRAGMENT_SHADER_PATH} + ".spv"}});
+
+
+  auto specData2 = std::tuple<uint32_t>(VSM_BLUR_RADIUS);
+  std::array<VkSpecializationMapEntry, 1> specMap2;
+  VkSpecializationInfo specInfo2;
+  makeSpecMap(specData2, specMap2, specInfo2);
+  
+  for (auto& info : maker.shaderStageInfos)
+  {
+    if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+    {
+      info.pSpecializationInfo = &specInfo;
+      break;
+    }
+  }
+  
+  for (size_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; ++i)
+  {
+    bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+    bindings.BindImage(0, m_cascadeViews[i], m_shadowmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindEnd(&m_vsmDescriptorSets[i], &m_vsmDescriptorSetLayout);
+  }
+
+  m_vsmPipeline.layout = maker.MakeLayout(m_device, {m_vsmDescriptorSetLayout}, sizeof(uint32_t));
+  m_vsmPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput, m_vsmRenderPass,
+      {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
 }
 
 void SimpleRender::SetupPostfxPipeline()
 {
   auto& bindings = GetDescMaker();
   
-  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
-  bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-  // TODO: Sampler should be different here
-  bindings.BindImage(1, m_gbuffer.resolved.view,
-    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindImage(2, m_fogImage.view,
-    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindImage(3, m_ssaoImage.view,
-    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindEnd(&m_postFxDescriptorSet, &m_postFxDescriptorSetLayout);
+  if (m_postFxDescriptorSetLayout == nullptr)
+  {
+    bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+    bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    // TODO: Sampler should be different here
+    bindings.BindImage(1, m_gbuffer.resolved.view,
+      m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(2, m_fogImage.view,
+      m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(3, m_ssaoImage.view,
+      m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindEnd(&m_postFxDescriptorSet, &m_postFxDescriptorSetLayout);
 
-  
-  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
-  bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    
+    bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+    bindings.BindBuffer(0, m_ubo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    // TODO: Sampler should be different here
+    bindings.BindImage(1, m_gbuffer.depth_stencil_layer.image.view,
+      m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindEnd(&m_fogDescriptorSet, &m_fogDescriptorSetLayout);
 
-  // TODO: REMOVE THIS, BREAKS INCAPSULATION!!!
-  bindings.BindImage(1, m_pScnMgr->GetLandscapeHeightmaps()[0], m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindBuffer(2, m_pScnMgr->GetLandscapeInfos(), nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    
+    bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
+    bindings.BindBuffer(0, m_ubo,
+      nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    // TODO: Sampler should be different here
+    bindings.BindImage(1, m_gbuffer.depth_stencil_layer.image.view,
+      m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(2, m_gbuffer.color_layers[0].image.view,
+      m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(3, m_ssaoNoise.view,
+      m_noiseSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindBuffer(4, m_ssaoKernel,
+      nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    bindings.BindEnd(&m_ssaoDescriptorSet, &m_ssaoDescriptorSetLayout);
+  }
+  else
+  {
+    // THIS CODE IS UTTER SHIT
+    std::array image_infos {
+      VkDescriptorImageInfo {
+        .sampler = m_landscapeHeightmapSampler,
+        .imageView = m_gbuffer.resolved.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_landscapeHeightmapSampler,
+        .imageView = m_fogImage.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_landscapeHeightmapSampler,
+        .imageView = m_ssaoImage.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_landscapeHeightmapSampler,
+        .imageView = m_gbuffer.depth_stencil_layer.image.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_landscapeHeightmapSampler,
+        .imageView = m_gbuffer.color_layers[0].image.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_noiseSampler,
+        .imageView = m_ssaoNoise.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+    };
 
-  // TODO: Sampler should be different here
-  bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
-    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindEnd(&m_fogDescriptorSet, &m_fogDescriptorSetLayout);
+    std::array writes{
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_postFxDescriptorSet,
+        .dstBinding = 1,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[0],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_postFxDescriptorSet,
+        .dstBinding = 2,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[1],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_postFxDescriptorSet,
+        .dstBinding = 3,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[2],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_fogDescriptorSet,
+        .dstBinding = 1,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[3],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_ssaoDescriptorSet,
+        .dstBinding = 1,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[3],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_ssaoDescriptorSet,
+        .dstBinding = 2,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[4],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_ssaoDescriptorSet,
+        .dstBinding = 3,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[5],
+      },
+    };
 
-  
-  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
-  bindings.BindBuffer(0, m_ubo,
-    nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-  // TODO: Sampler should be different here
-  bindings.BindImage(1, m_gbuffer.depth_stencil_layer.image.view,
-    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindImage(2, m_gbuffer.color_layers[0].image.view,
-    m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindImage(3, m_ssaoNoise.view,
-    m_noiseSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-  bindings.BindBuffer(4, m_ssaoKernel,
-    nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-  bindings.BindEnd(&m_ssaoDescriptorSet, &m_ssaoDescriptorSetLayout);
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  }
 
   
   vk_utils::GraphicsPipelineMaker maker;
@@ -665,7 +793,7 @@ void SimpleRender::SetupPostfxPipeline()
     });
 
     m_fogPipeline.layout = maker.MakeLayout(m_device,
-      {m_fogDescriptorSetLayout}, sizeof(graphicsPushConsts));
+      {m_fogDescriptorSetLayout, m_lightingFragmentDescriptorSetLayout}, sizeof(graphicsPushConsts));
     
     maker.SetDefaultState(m_width, m_height, 2);
 
@@ -679,8 +807,8 @@ void SimpleRender::SetupPostfxPipeline()
   {
     maker.LoadShaders(m_device, {
         {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{SSAO_FRAGMENT_SHADER_PATH} + ".spv"},
-    });
+        {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{SSAO_FRAGMENT_SHADER_PATH} + ".spv"},
+      });
     
     auto specData = std::tuple<uint32_t, float>(SSAO_KERNEL_SIZE, SSAO_RADIUS);
     std::array<VkSpecializationMapEntry, 2> specMap;
@@ -1195,6 +1323,30 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
     }
     vkCmdEndRenderPass(a_cmdBuff);
 
+    
+    VkClearValue colorClear {
+      .color = {{0.f, 0.f, 0.f, 0.f}},
+    };
+    VkRenderPassBeginInfo shadowPassInfo2 {
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+      .renderPass = m_vsmRenderPass,
+      .framebuffer = m_vsmFramebuffers[i],
+      .renderArea = {
+        .offset = {0, 0},
+        .extent = {SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION},
+      },
+      .clearValueCount = 1,
+      .pClearValues = &colorClear,
+    };
+    vkCmdBeginRenderPass(a_cmdBuff, &shadowPassInfo2, VK_SUBPASS_CONTENTS_INLINE);
+    {
+      vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vsmPipeline.pipeline);
+      vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vsmPipeline.layout,
+          0, 1, &m_vsmDescriptorSets[i], 0, nullptr);
+      vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+    }
+    vkCmdEndRenderPass(a_cmdBuff);
+
     cmdEndRegion(a_cmdBuff);
   }
 
@@ -1296,6 +1448,8 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
           0, sizeof(graphicsPushConsts), &graphicsPushConsts);
       vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_fogPipeline.layout,
           0, 1, &m_fogDescriptorSet, 0, nullptr);
+      vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_fogPipeline.layout,
+          1, 1, &m_lightingFragmentDescriptorSet, 0, nullptr);
 
       vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
 
@@ -1379,6 +1533,7 @@ void SimpleRender::RecreateSwapChain()
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
+  ClearPipeline(m_vsmPipeline);
   ClearPipeline(m_fogPipeline);
   ClearPipeline(m_ssaoPipeline);
   ClearPipeline(m_postFxPipeline);
@@ -1752,6 +1907,7 @@ void SimpleRender::ClearAllPipelines()
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
+  ClearPipeline(m_vsmPipeline);
   ClearPipeline(m_postFxPipeline);
   ClearPipeline(m_fogPipeline);
   ClearPipeline(m_ssaoPipeline);
@@ -2034,7 +2190,22 @@ void SimpleRender::ClearShadowmaps()
     m_shadowmapRenderPass = VK_NULL_HANDLE;
   }
 
+  if (m_vsmRenderPass != VK_NULL_HANDLE)
+  {
+    vkDestroyRenderPass(m_device, m_vsmRenderPass, nullptr);
+    m_vsmRenderPass = VK_NULL_HANDLE;
+  }
+
   for (auto& fbuf : m_cascadeFramebuffers)
+  {
+    if (fbuf != VK_NULL_HANDLE)
+    {
+      vkDestroyFramebuffer(m_device, fbuf, nullptr);
+      fbuf = VK_NULL_HANDLE;
+    }
+  }
+
+  for (auto& fbuf : m_vsmFramebuffers)
   {
     if (fbuf != VK_NULL_HANDLE)
     {
@@ -2052,7 +2223,17 @@ void SimpleRender::ClearShadowmaps()
     }
   }
   
+  for (auto& image : m_vsmViews)
+  {
+    if (image != VK_NULL_HANDLE)
+    {
+      vkDestroyImageView(m_device, image, nullptr);
+      image = VK_NULL_HANDLE;
+    }
+  }
+  
   vk_utils::deleteImg(m_device, &m_shadowmap);
+  vk_utils::deleteImg(m_device, &m_vsm);
 }
 
 void SimpleRender::CreateGBuffer()
@@ -2446,44 +2627,83 @@ void SimpleRender::CreatePostFx()
 void SimpleRender::CreateShadowmaps()
 {
   auto format = m_gbuffer.depth_stencil_layer.image.format;
+  auto vsmFormat = VK_FORMAT_R32G32_SFLOAT;
 
   {
+    {
+      VkImageCreateInfo imgInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = m_gbuffer.depth_stencil_layer.image.format,
+        .extent = VkExtent3D{
+          .width = SHADOW_MAP_RESOLUTION,
+          .height = SHADOW_MAP_RESOLUTION,
+          .depth = 1,
+        },
+        .mipLevels = 1,
+        .arrayLayers = SHADOW_MAP_CASCADE_COUNT,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+      };
+      
+      VkImageViewCreateInfo viewInfo {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+        .format = format,
+        .subresourceRange = VkImageSubresourceRange{
+          .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+          .baseMipLevel = 0,
+          .levelCount = 1,
+          .baseArrayLayer = 0,
+          .layerCount = SHADOW_MAP_CASCADE_COUNT,
+        },
+      };
+      
+      vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION,
+        format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+          &m_shadowmap, &imgInfo, &viewInfo);
+    }
+    
+    {
+      VkImageCreateInfo imgInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = vsmFormat,
+        .extent = VkExtent3D{
+          .width = SHADOW_MAP_RESOLUTION,
+          .height = SHADOW_MAP_RESOLUTION,
+          .depth = 1,
+        },
+        .mipLevels = 1,
+        .arrayLayers = SHADOW_MAP_CASCADE_COUNT,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+      };
+      
+      VkImageViewCreateInfo viewInfo {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+        .format = vsmFormat,
+        .subresourceRange = VkImageSubresourceRange{
+          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+          .baseMipLevel = 0,
+          .levelCount = 1,
+          .baseArrayLayer = 0,
+          .layerCount = SHADOW_MAP_CASCADE_COUNT,
+        },
+      };
+      
+      vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION,
+        format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+          &m_vsm, &imgInfo, &viewInfo);
+    }
 
-    VkImageCreateInfo imgInfo{
-      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-      .imageType = VK_IMAGE_TYPE_2D,
-      .format = m_gbuffer.depth_stencil_layer.image.format,
-      .extent = VkExtent3D{
-        .width = SHADOW_MAP_RESOLUTION,
-        .height = SHADOW_MAP_RESOLUTION,
-        .depth = 1,
-      },
-      .mipLevels = 1,
-      .arrayLayers = SHADOW_MAP_CASCADE_COUNT,
-      .samples = VK_SAMPLE_COUNT_1_BIT,
-      .tiling = VK_IMAGE_TILING_OPTIMAL,
-      .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-      .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-    };
-    
-    VkImageViewCreateInfo viewInfo {
-      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-      .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-      .format = format,
-      .subresourceRange = VkImageSubresourceRange{
-        .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-        .baseMipLevel = 0,
-        .levelCount = 1,
-        .baseArrayLayer = 0,
-        .layerCount = SHADOW_MAP_CASCADE_COUNT,
-      },
-    };
-    
-    vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION,
-      format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        &m_shadowmap, &imgInfo, &viewInfo);
-    
     for (size_t i = 0; i < m_cascadeViews.size(); ++i)
     {
       VkImageViewCreateInfo info {
@@ -2500,6 +2720,10 @@ void SimpleRender::CreateShadowmaps()
         },
       };
       vkCreateImageView(m_device, &info, nullptr, &m_cascadeViews[i]);
+      info.image = m_vsm.image;
+      info.format = vsmFormat;
+      info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      vkCreateImageView(m_device, &info, nullptr, &m_vsmViews[i]);
     }
   }
 
@@ -2553,6 +2777,60 @@ void SimpleRender::CreateShadowmaps()
     setObjectName(m_shadowmapRenderPass, VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT, "Shadowmap RP");
   }
 
+  
+  {
+    std::array attachmentDescs{
+      VkAttachmentDescription{
+        .format = vsmFormat,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+    };
+
+    std::array colorRefs{
+      VkAttachmentReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}
+    };
+    
+    std::array subpasses {
+      VkSubpassDescription {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = static_cast<uint32_t>(colorRefs.size()),
+        .pColorAttachments = colorRefs.data(),
+      },
+    };
+    
+    std::array dependencies {
+      VkSubpassDependency {
+        .srcSubpass = 0,
+        .dstSubpass = VK_SUBPASS_EXTERNAL,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+      },
+    };
+
+    VkRenderPassCreateInfo renderPassInfo {
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+      .attachmentCount = static_cast<uint32_t>(attachmentDescs.size()),
+      .pAttachments = attachmentDescs.data(),
+      .subpassCount = static_cast<uint32_t>(subpasses.size()),
+      .pSubpasses = subpasses.data(),
+      .dependencyCount = static_cast<uint32_t>(dependencies.size()),
+      .pDependencies = dependencies.data(),
+    };
+
+    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_vsmRenderPass))
+
+    setObjectName(m_vsmRenderPass, VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT, "VSM RP");
+  }
+
   for (size_t i = 0; i < m_cascadeViews.size(); ++i)
   {
     VkFramebufferCreateInfo fbufInfo{
@@ -2565,5 +2843,8 @@ void SimpleRender::CreateShadowmaps()
       .layers = 1,
     };
     vkCreateFramebuffer(m_device, &fbufInfo, nullptr, &m_cascadeFramebuffers[i]);
+    fbufInfo.renderPass = m_vsmRenderPass;
+    fbufInfo.pAttachments = &m_vsmViews[i];
+    vkCreateFramebuffer(m_device, &fbufInfo, nullptr, &m_vsmFramebuffers[i]);
   }
 }
