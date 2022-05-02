@@ -117,6 +117,27 @@ public:
     }
   }
 
+  void cmdBeginRegion(VkCommandBuffer a_cmdBuff, const char* name) const
+  {
+    if (vkCmdDebugMarkerBeginEXT != nullptr)
+    {
+      VkDebugMarkerMarkerInfoEXT info {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT,
+        .pMarkerName = name,
+        .color = {0, 0.5, 0, 1},
+      };
+      vkCmdDebugMarkerBeginEXT(a_cmdBuff, &info);
+    }
+  }
+
+  void cmdEndRegion(VkCommandBuffer a_cmdBuff) const
+  {
+    if (vkCmdDebugMarkerEndEXT != nullptr)
+    {
+      vkCmdDebugMarkerEndEXT(a_cmdBuff);
+    }
+  }
+
   static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
     VkDebugReportFlagsEXT                       flags,
     VkDebugReportObjectTypeEXT                  objectType,

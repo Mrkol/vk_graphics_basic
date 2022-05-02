@@ -822,6 +822,7 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
 
 void SimpleRender::RecordStaticMeshCulling(VkCommandBuffer a_cmdBuff)
 {
+  cmdBeginRegion(a_cmdBuff, "Static mesh culling");
   vkCmdFillBuffer(a_cmdBuff, m_instanceMappingBuffer, 0, sizeof(uint), 0);
 
   {
@@ -883,10 +884,14 @@ void SimpleRender::RecordStaticMeshCulling(VkCommandBuffer a_cmdBuff)
         static_cast<uint32_t>(bufferMemBarriers.size()), bufferMemBarriers.data(),
         0, nullptr);
   }
+
+  cmdEndRegion(a_cmdBuff);
 }
 
 void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff)
 {
+  cmdBeginRegion(a_cmdBuff, "Landscape culling");
+
   for (auto& buf : m_landscapeTileBuffers)
   {
     vkCmdFillBuffer(a_cmdBuff, buf, 0, sizeof(uint), 0);
@@ -974,11 +979,15 @@ void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff)
         static_cast<uint32_t>(bufferMemBarriers.size()), bufferMemBarriers.data(),
         0, nullptr);
   }
+
+  cmdEndRegion(a_cmdBuff);
 }
 
 
 void SimpleRender::RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
+  cmdBeginRegion(a_cmdBuff, "Static meshes");
+
   vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS,
     pickGeometryPipeline(m_deferredPipeline, depthOnly));
 
@@ -996,10 +1005,13 @@ void SimpleRender::RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, bool dep
   vkCmdBindIndexBuffer(a_cmdBuff, indexBuf, 0, VK_INDEX_TYPE_UINT32);
 
   vkCmdDrawIndexedIndirect(a_cmdBuff, m_indirectDrawBuffer, 0, m_pScnMgr->MeshesNum(), sizeof(VkDrawIndexedIndirectCommand));
+
+  cmdEndRegion(a_cmdBuff);
 }
 
 void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
+  cmdBeginRegion(a_cmdBuff, "Landscapes");
 
   vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, pickGeometryPipeline(m_deferredLandscapePipeline, depthOnly));
 
@@ -1011,10 +1023,14 @@ void SimpleRender::RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, bool dept
 
     vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, 0, 1, 0);
   }
+
+  cmdEndRegion(a_cmdBuff);
 }
 
 void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff, bool depthOnly)
 {
+  cmdBeginRegion(a_cmdBuff, "Grass");
+
   vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS,
     pickGeometryPipeline(m_deferredGrassPipeline, depthOnly));
   
@@ -1026,9 +1042,14 @@ void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff, bool depthOnl
 
     vkCmdDrawIndirect(a_cmdBuff, m_landscapeIndirectDrawBuffer, sizeof(VkDrawIndirectCommand), 1, 0);
   }
+
+  cmdEndRegion(a_cmdBuff);
 }
 
-void SimpleRender::RecordLightResolve(VkCommandBuffer a_cmdBuff) {
+void SimpleRender::RecordLightResolve(VkCommandBuffer a_cmdBuff)
+{
+  cmdBeginRegion(a_cmdBuff, "Light resolve");
+
   vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.pipeline);
         
   std::array dsets {m_lightingDescriptorSet, m_lightingFragmentDescriptorSet};
@@ -1048,16 +1069,24 @@ void SimpleRender::RecordLightResolve(VkCommandBuffer a_cmdBuff) {
     static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
 
   vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+
+  cmdEndRegion(a_cmdBuff);
 }
 
 void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
 {
+  cmdBeginRegion(a_cmdBuff, "Shadowmaps");
+
   vk_utils::setDefaultViewport(a_cmdBuff,
       static_cast<float>(SHADOW_MAP_RESOLUTION), static_cast<float>(SHADOW_MAP_RESOLUTION));
   vk_utils::setDefaultScissor(a_cmdBuff, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION);
 
   for (size_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; ++i)
   {
+    std::string regName = "Cascade ";
+    regName += std::to_string(i);
+    cmdBeginRegion(a_cmdBuff, regName.c_str());
+
     VkClearValue depthClear {
       .depthStencil = {1.0f, 0}
     };
@@ -1091,7 +1120,11 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
       RecordGrassRendering(a_cmdBuff, true);
     }
     vkCmdEndRenderPass(a_cmdBuff);
+
+    cmdEndRegion(a_cmdBuff);
   }
+
+  cmdEndRegion(a_cmdBuff);
 }
 
 void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t swapchainIdx)
