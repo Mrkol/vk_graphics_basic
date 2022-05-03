@@ -7,11 +7,11 @@ else()
 endif()
 
 set(RENDER_SOURCE
-        ../../render/scene_mgr.cpp
-        ../../render/render_imgui.cpp
-        create_render.cpp
-        simple_render.cpp
-        simple_render_tex.cpp)
+    ../../render/scene_mgr.cpp
+    ../../render/render_imgui.cpp
+    
+    simple_render.cpp
+)
 
 add_executable(simple_forward main.cpp ../../utils/glfw_window.cpp ${VK_UTILS_SRC} ${SCENE_LOADER_SRC} ${RENDER_SOURCE} ${IMGUI_SRC})
 
@@ -19,8 +19,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL Windows)
     set_target_properties(simple_forward PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
     target_link_libraries(simple_forward PRIVATE project_options
-                          volk glfw3 project_warnings)
+                          volk glfw3 project_warnings glm::glm)
 else()
     target_link_libraries(simple_forward PRIVATE project_options
-                          volk glfw project_warnings) #
+                          volk glfw project_warnings glm::glm) #
 endif()

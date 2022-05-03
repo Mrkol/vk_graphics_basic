@@ -1,15 +1,16 @@
-#ifndef CHIMERA_SCENE_MGR_H
-#define CHIMERA_SCENE_MGR_H
+#pragma once
 
 #include <vector>
 
 #include <geom/vk_mesh.h>
-#include "LiteMath.h"
+#include <glm/glm.hpp>
 #include <vk_copy.h>
 
 #include "vk_images.h"
 #include "../loader_utils/hydraxml.h"
 #include "../resources/shaders/common.h"
+
+
 
 struct GpuInstanceInfo
 {
@@ -22,8 +23,8 @@ struct GpuMeshInfo
   uint32_t indexCount;
   uint32_t indexOffset;
   uint32_t vertexOffset;
-  LiteMath::float3 AABB_min{};
-  LiteMath::float3 AABB_max{};
+  glm::vec3 AABB_min{};
+  glm::vec3 AABB_max{};
 };
 
 struct Landscape
@@ -35,19 +36,32 @@ struct Landscape
 
 struct LandscapeGpuInfo
 {
-  LiteMath::float4x4 model;
+  glm::mat4 model;
   uint32_t width;
   uint32_t height;
   uint32_t tileSize;
   uint32_t grassDensity;
-  char padding[128 - sizeof(LiteMath::float4x4) - 4*sizeof(uint32_t)];
+  char padding[128 - sizeof(glm::vec4) - 4*sizeof(uint32_t)];
 };
 
 struct GpuLight
 {
-  LiteMath::float4 positionAndOuterRadius{};
-  LiteMath::float4 colorAndInnerRadius{};
+  glm::vec4 positionAndOuterRadius{};
+  glm::vec4 colorAndInnerRadius{};
 };
+
+inline glm::mat4 lmToGlm(const LiteMath::float4x4& lmMat)
+{
+  glm::mat4 mat;
+  for (int i = 0; i < 4; ++i)
+  {
+    for (int j = 0; j < 4; ++j)
+    {
+      mat[j][i] = lmMat(i, j);
+    }
+  }
+  return mat;
+}
 
 struct SceneManager
 {
@@ -62,7 +76,7 @@ struct SceneManager
   uint32_t AddMeshFromData(cmesh::SimpleMesh &meshData);
   void AddLandscape();
 
-  uint32_t InstanceMesh(uint32_t meshId, const LiteMath::float4x4 &matrix, bool markForRender = true);
+  uint32_t InstanceMesh(uint32_t meshId, const glm::mat4& matrix, bool markForRender = true);
 
   void MarkInstance(uint32_t instId);
   void UnmarkInstance(uint32_t instId);
@@ -120,7 +134,7 @@ struct SceneManager
 
   // Debug stuff
   GpuInstanceInfo GetInstanceInfo(std::size_t i) const { return m_instanceInfos[i]; }
-  LiteMath::float4x4 GetInstanceMatrix(std::size_t i) const { return m_instanceMatrices[i]; }
+  glm::mat4 GetInstanceMatrix(std::size_t i) const { return m_instanceMatrices[i]; }
   LiteMath::Box4f GetMeshBBox(std::size_t i) const { return m_meshBboxes[i]; }
   // /debug stuff
 
@@ -132,7 +146,7 @@ struct SceneManager
   hydra_xml::Camera GetCamera(uint32_t camId) const;
   MeshInfo GetMeshInfo(uint32_t meshId) const {assert(meshId < m_meshInfos.size()); return m_meshInfos[meshId];}
 
-  LiteMath::float4x4 GetInstanceMatrix(uint32_t instId) const {assert(instId < m_instanceMatrices.size()); return m_instanceMatrices[instId];}
+  glm::mat4 GetInstanceMatrix(uint32_t instId) const {assert(instId < m_instanceMatrices.size()); return m_instanceMatrices[instId];}
   LiteMath::Box4f GetSceneBbox() const {return sceneBbox;}
 
   void ReloadGPUData();
@@ -146,7 +160,7 @@ private:
   std::shared_ptr<IMeshData> m_pMeshData = nullptr;
 
   std::vector<GpuInstanceInfo> m_instanceInfos = {};
-  std::vector<LiteMath::float4x4> m_instanceMatrices = {};
+  std::vector<glm::mat4> m_instanceMatrices = {};
 
   std::vector<hydra_xml::Camera> m_sceneCameras = {};
   std::vector<hydra_xml::LightInstance> m_sceneLights = {};
@@ -185,5 +199,3 @@ private:
     float pos[3];
   };
 };
-
-#endif//CHIMERA_SCENE_MGR_H

@@ -11,6 +11,7 @@ layout (set = 1, binding = 5) uniform ShadowmapUBO
 {
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	vec4 cascadeSplitDepths[SHADOW_MAP_CASCADE_COUNT/4];
+	vec4 cascadeMatrixNorms[SHADOW_MAP_CASCADE_COUNT/4];
 } shadowmapUbo;
 
 layout (set = 1, binding = 6) uniform sampler2DArray inRsmNormal;
@@ -29,6 +30,10 @@ const mat4 biasMat = mat4(
 );
 const float ambient = 0.1f;
 
+float cascadeSize(uint cascadeIndex)
+{
+	return shadowmapUbo.cascadeMatrixNorms[cascadeIndex/4][cascadeIndex%4];
+}
 
 float shade(vec3 wPos, uint cascadeIndex)
 {

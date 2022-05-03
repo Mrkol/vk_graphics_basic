@@ -5,14 +5,13 @@
 #include "vk_utils.h"
 #include "utils/Camera.h"
 #include <cstring>
-#include <memory>
 
 struct AppInput
 {
   AppInput(){
-    cams[1].pos    = float3(4.0f, 4.0f, 4.0f);
-    cams[1].lookAt = float3(0, 0, 0);
-    cams[1].up     = float3(0, 1, 0);
+    cams[1].pos    = glm::vec3(4.0f, 4.0f, 4.0f);
+    cams[1].lookAt = glm::vec3(0, 0, 0);
+    cams[1].up     = glm::vec3(0, 1, 0);
   }
 
   enum {MAXKEYS = 384};

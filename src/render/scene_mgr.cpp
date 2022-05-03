@@ -51,13 +51,11 @@ bool SceneManager::LoadSceneXML(const std::string &scenePath, bool transpose)
   for(auto loc : hscene_main->MeshFiles())
   {
     auto meshId    = AddMeshFromFile(loc);
-    auto instances = hscene_main->GetAllInstancesOfMeshLoc(loc); 
-    for(size_t j = 0; j < instances.size(); ++j)
+    auto instancesLM = hscene_main->GetAllInstancesOfMeshLoc(loc);
+    for (auto& lmMat : instancesLM)
     {
-      if(transpose)
-        InstanceMesh(meshId, LiteMath::transpose(instances[j]));
-      else
-        InstanceMesh(meshId, instances[j]);
+      const auto mat = lmToGlm(lmMat);
+      InstanceMesh(meshId, transpose ? glm::transpose(mat) : mat);
     }
   }
 
@@ -183,9 +181,9 @@ uint32_t SceneManager::AddMeshFromData(cmesh::SimpleMesh &meshData)
   m_totalIndices  += (uint32_t)meshData.IndicesNum();
 
   m_meshInfos.push_back(info);
-  Box4f meshBox;
+  LiteMath::Box4f meshBox;
   for (uint32_t i = 0; i < meshData.VerticesNum(); ++i) {
-    meshBox.include(reinterpret_cast<float4*>(meshData.vPos4f.data())[i]);
+    meshBox.include(reinterpret_cast<LiteMath::float4*>(meshData.vPos4f.data())[i]);
   }
   m_meshBboxes.push_back(meshBox);
 
@@ -206,8 +204,8 @@ void SceneManager::AddLandscape()
   const std::size_t tileHeight = width/tileSize;
 
   std::vector<float> heights(width*height, 0);
-  std::vector<LiteMath::float2> tileHeights(tileWidth*tileHeight,
-    LiteMath::float2(std::numeric_limits<float>::max(),
+  std::vector tileHeights(tileWidth*tileHeight,
+    glm::vec2(std::numeric_limits<float>::max(),
       -std::numeric_limits<float>::max()));
   
   for (std::size_t i = 0; i < height; ++i)
@@ -247,11 +245,11 @@ void SceneManager::AddLandscape()
   constexpr float scale = 400.f;
 
   LiteMath::float4x4 mat =
-    LiteMath::scale4x4(float3(scale))
-      * LiteMath::translate4x4(float3(-0.5f, -0.1f, -0.5f));
+    LiteMath::scale4x4(LiteMath::float3(scale))
+      * LiteMath::translate4x4(LiteMath::float3(-0.5f, -0.1f, -0.5f));
 
   m_landscapeInfos.emplace_back(LandscapeGpuInfo{
-    .model = mat,
+    .model = lmToGlm(mat),
     .width = static_cast<uint32_t>(width),
     .height = static_cast<uint32_t>(height),
     .tileSize = static_cast<uint32_t>(tileSize),
@@ -272,13 +270,13 @@ void SceneManager::AddLandscape()
     m_sceneLights.emplace_back(hydra_xml::LightInstance{
         0, 0,
         {}, {},
-        mat * LiteMath::translate4x4(float3{x, z, y})
+        mat * LiteMath::translate4x4(LiteMath::float3{x, z, y})
       });
   }
 }
 
 uint32_t SceneManager::InstanceMesh(const uint32_t meshId,
-  const LiteMath::float4x4 &matrix, bool markForRender)
+  const glm::mat4& matrix, bool markForRender)
 {
   assert(meshId < m_meshInfos.size());
 
@@ -317,7 +315,7 @@ void SceneManager::LoadGeoDataOnGPU()
   VkDeviceSize indexBufSize  = m_pMeshData->IndexDataSize();
   VkDeviceSize infoBufSize   = m_meshInfos.size() * sizeof(GpuMeshInfo);
   VkDeviceSize instanceInfoBufSize = m_instanceInfos.size() * sizeof(GpuInstanceInfo);
-  VkDeviceSize instanceMatrixBufSize = m_instanceMatrices.size() * sizeof(LiteMath::float4x4);
+  VkDeviceSize instanceMatrixBufSize = m_instanceMatrices.size() * sizeof(m_instanceMatrices[0]);
   VkDeviceSize lightsBufSize = m_sceneLights.size() * sizeof(GpuLight);
   VkDeviceSize landscapeInfoBufSize = m_landscapeInfos.size() * sizeof(LandscapeGpuInfo);
   
@@ -351,8 +349,8 @@ void SceneManager::LoadGeoDataOnGPU()
     const auto& aabb = m_meshBboxes[i];
     mesh_info_tmp.emplace_back(GpuMeshInfo {
         info.m_indNum, info.m_indexOffset, static_cast<uint32_t>(info.m_vertexOffset),
-        LiteMath::float3(aabb.boxMin.x, aabb.boxMin.y, aabb.boxMin.z),
-        LiteMath::float3(aabb.boxMax.x, aabb.boxMax.y, aabb.boxMax.z)
+        glm::vec3(aabb.boxMin.x, aabb.boxMin.y, aabb.boxMin.z),
+        glm::vec3(aabb.boxMax.x, aabb.boxMax.y, aabb.boxMax.z)
       });
   }
 
@@ -362,10 +360,11 @@ void SceneManager::LoadGeoDataOnGPU()
   lights_tmp.reserve(m_sceneLights.size());
   for (auto light : m_sceneLights)
   {
-    float4 pos = light.matrix.col(3);
+    auto posLM = light.matrix.col(3);
+    glm::vec4 pos(posLM.x, posLM.y, posLM.z, posLM.w);
     lights_tmp.emplace_back(GpuLight{
-        LiteMath::float4(pos.x, pos.y, pos.z, 10 + randU() * 20),
-        LiteMath::float4(randU()/2 + .5f, randU()/2 + .5f, randU()/2 + .5f, 0.1f)
+        glm::vec4(pos.x, pos.y, pos.z, 10 + randU() * 20),
+        glm::vec4(randU()/2 + .5f, randU()/2 + .5f, randU()/2 + .5f, 0.1f)
       });
   }
 

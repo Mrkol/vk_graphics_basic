@@ -3,7 +3,6 @@
 
 #include "pugixml.hpp"
 #include "LiteMath.h"
-using namespace LiteMath;
 
 #include <vector>
 #include <set>

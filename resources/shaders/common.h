@@ -2,21 +2,14 @@
 #define VK_GRAPHICS_BASIC_COMMON_H
 
 #ifdef __cplusplus
-#include <LiteMath.h>
-using LiteMath::uint2;
-using LiteMath::float2;
-using LiteMath::float3;
-using LiteMath::float4;
-using LiteMath::float4x4;
-using LiteMath::make_float2;
-using LiteMath::make_float4;
+#include <glm/glm.hpp>
 
-typedef unsigned int uint;
-typedef uint2        uvec2;
-typedef float4       vec4;
-typedef float3       vec3;
-typedef float2       vec2;
-typedef float4x4     mat4;
+#define uint glm::uint
+#define uvec2 glm::uvec2
+#define vec4 glm::vec4
+#define vec3 glm::vec3
+#define vec2 glm::vec2
+#define mat4 glm::mat4
 
 #define PAD(A, N) char pad##A[N];
 #define BOOL uint32_t // Bool is 32 bits in GLSL!!!!
@@ -45,5 +38,15 @@ struct UniformParams
 
 #undef PAD
 #undef BOOL
+
+
+#ifdef __cplusplus
+#undef uint
+#undef uvec2
+#undef vec4
+#undef vec3
+#undef vec2
+#undef mat4
+#endif
 
 #endif //VK_GRAPHICS_BASIC_COMMON_H

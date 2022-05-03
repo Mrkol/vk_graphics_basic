@@ -35,42 +35,72 @@ mat4 invView = inverse(params.mView);
 
 
 
-float rsm(vec3 cPos, vec3 cNormal, uint cascadeIndex)
+vec3 irradiance(vec3 cPosition, vec3 cNormal, uint shadingModel, uint cascadeIndex)
+{
+    const vec3 cLightPosition = (params.mView * vec4(Params.lightPos, 1)).xyz;
+    const vec3 lightColor = vec3(1, 0.9, 0.9);
+
+    const vec3 toLightVec = cLightPosition - cPosition;
+    const vec3 cLightDir = normalize(toLightVec);
+    
+    vec3 diffuse = lightColor;
+    switch (shadingModel)
+    {
+        case 0:
+            diffuse *= max(dot(cNormal, cLightDir), 0.0f);
+            break;
+        case 1:
+            diffuse *= abs(dot(cNormal, cLightDir));
+            break;
+        case 2:
+            diffuse *= 0.5f*dot(cNormal, cLightDir) + 0.5f;
+            break;
+    }
+    
+    const float shadow = shade((invView * vec4(cPosition, 1.f)).xyz, cascadeIndex);
+
+    return shadow*diffuse;
+}
+
+vec3 rsm(vec3 cPos, vec3 cNormal, uint cascadeIndex)
 {
 	const vec4 shadowCoord = (biasMat * shadowmapUbo.cascadeViewProjMat[cascadeIndex]) * invView * vec4(cPos, 1.f);	
 
     const mat4 fromShadowNDC = inverse(biasMat * shadowmapUbo.cascadeViewProjMat[cascadeIndex]);
     const mat3 fromShadowSJacobi = mat3(transpose(shadowmapUbo.cascadeViewProjMat[cascadeIndex]));
 
-	float ambient = 0;
+    const float CS = cascadeSize(cascadeIndex);
+
+	vec3 ambient = vec3(0);
 
 	for (uint i = 0; i < RSM_KERNEL_SIZE; ++i)
 	{
-		const float weight = rsmKernel.samples[i].z;
+		const float weight = rsmKernel.samples[i].z * CS*CS;
 
-		const vec3 ndcPoint = shadowCoord.xyz + vec3(rsmKernel.samples[i].xy, 0);
-        const vec3 cPoint = (params.mView * fromShadowNDC * vec4(ndcPoint, 1.0)).xyz;
-	    vec3 cPointNormal = mat3(params.mView)
-            * fromShadowSJacobi * texture(inRsmNormal, vec3(ndcPoint.st, cascadeIndex)).xyz;
+		const vec3 ndcPoint = shadowCoord.xyz + vec3(rsmKernel.samples[i].xy*CS, 0);
+        const vec3 wPoint = (fromShadowNDC * vec4(ndcPoint, 1.0)).xyz;
+        const vec3 cPoint = (params.mView * vec4(wPoint, 1.0)).xyz;
+        vec4 rsmValue = texture(inRsmNormal, vec3(ndcPoint.st, cascadeIndex));
+	    vec3 cPointNormal = mat3(params.mView) * fromShadowSJacobi * rsmValue.xyz;
+
+        const uint shadingModel = uint(rsmValue.z);
 
         float skip = cPointNormal == vec3(0, 0, 0) ? 0.f : 1.f;
         cPointNormal = normalize(cPointNormal);
 
-        const vec3 lightDir = cPos - cPoint;
+        const vec3 toLight = cPoint - cPos;
 
-        const float NpoL = dot(cPointNormal, lightDir);
-        const float NomL = dot(cNormal, -lightDir);
-        const float dist2 = dot(lightDir, lightDir);
-        // 0 -> 0.01f
-        // 1 -> 0.1f
-        // 2 -> 1
-        const float phi = pow(10, cascadeIndex)/100.f;
-		ambient += phi*skip*max(0, NpoL)*max(0, NomL)/sq(dist2)*weight;
+        const float NpotL = dot(cPointNormal, toLight);
+        const float NofL = dot(cNormal, toLight);
+        const float dist2 = dot(toLight, -toLight);
+        // hack: albedo is constant right now
+        const vec3 phi = Params.baseColor;
+		ambient += weight*phi*skip*max(0, NpotL)*max(0, NofL)/sq(dist2);
 	}
 
-    ambient /= float(RSM_KERNEL_SIZE);
-
-    return ambient;
+    // Article authors talk of some "global normalization".
+    // I assume they used the PODGONYAN operator as well.
+    return clamp(ambient / (CS*CS*7000.f), 0, 1);
 }
 
 void main()
@@ -90,34 +120,15 @@ void main()
 
 
     const uint cascadeIdx = cascadeForDepth(position.z);
-    const float shadow = shade((invView * vec4(position, 1.f)).xyz, cascadeIdx);
-
-    const vec3 lightPosition = (params.mView * vec4(Params.lightPos, 1)).xyz;
-    const vec3 lightColor = vec3(1, 0.9, 0.9);
-
-    const vec3 toLightVec = lightPosition - position;
-    const vec3 lightDir = normalize(toLightVec);
+    const vec3 direct = irradiance(position, normal, shadingModel, cascadeIdx);
     
-    vec3 diffuse = lightColor;
-    switch (shadingModel)
-    {
-        case 0:
-            diffuse *= max(dot(normal, lightDir), 0.0f);
-            break;
-        case 1:
-            diffuse *= abs(dot(normal, lightDir));
-            break;
-        case 2:
-            diffuse *= 0.5f*dot(normal, lightDir) + 0.5f;
-            break;
-    }
 
-    float ambient = 0.05f;
+    vec3 ambient = vec3(0.05f);
 
     if (Params.enableRsm)
     {
         ambient = rsm(position, normal, cascadeIdx);
     }
 
-    out_fragColor = vec4((ambient + shadow*diffuse) * albedo, 0.5f);
+    out_fragColor = vec4((ambient + direct) * albedo, 0.5f);
 }

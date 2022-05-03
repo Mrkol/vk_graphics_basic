@@ -183,14 +183,14 @@ void setupImGuiContext(GLFWwindow* a_window)
 }
 
 
-void mainLoop(std::shared_ptr<IRender> &app, GLFWwindow* window, bool displayGUI)
+void mainLoop(IRender& app, GLFWwindow* window, bool displayGUI)
 {
   constexpr int NAverage = 60;
   double avgTime = 0.0;
   int avgCounter = 0;
   int currCam    = 0;
 
-  g_appInput.cams[0] = app->GetCurrentCamera();
+  g_appInput.cams[0] = app.GetCurrentCamera();
   double lastTime = glfwGetTime();
   while (!glfwWindowShouldClose(window))
   {
@@ -206,12 +206,12 @@ void mainLoop(std::shared_ptr<IRender> &app, GLFWwindow* window, bool displayGUI
 
     UpdateCamera(window, g_appInput.cams[currCam], static_cast<float>(diffTime));
     
-    app->ProcessInput(g_appInput);
-    app->UpdateCamera(g_appInput.cams, 2);
+    app.ProcessInput(g_appInput);
+    app.UpdateCamera(g_appInput.cams, 2);
     if(displayGUI)
-      app->DrawFrame(static_cast<float>(thisTime), DrawMode::WITH_GUI);
+      app.DrawFrame(static_cast<float>(thisTime), DrawMode::WITH_GUI);
     else
-      app->DrawFrame(static_cast<float>(thisTime), DrawMode::NO_GUI);
+      app.DrawFrame(static_cast<float>(thisTime), DrawMode::NO_GUI);
 
     // count and print FPS
     //

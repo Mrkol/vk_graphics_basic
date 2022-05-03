@@ -20,7 +20,7 @@ GLFWwindow * initWindow(int width, int height,
                         GLFWmousebuttonfun mouseBtn = onMouseButtonClickedBasic,
                         GLFWscrollfun mouseScroll = onMouseScrollBasic);
 
-void mainLoop(std::shared_ptr<IRender> &app, GLFWwindow* window, bool displayGUI = false);
+void mainLoop(IRender& app, GLFWwindow* window, bool displayGUI = false);
 
 void setupImGuiContext(GLFWwindow* a_window);
 

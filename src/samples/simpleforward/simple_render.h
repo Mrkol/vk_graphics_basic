@@ -30,10 +30,10 @@ struct GBuffer
 
 struct SceneGeometryPipeline
 {
-  VkPipelineLayout layout;
-  VkPipeline pipeline;
-  VkPipeline shadow;
-  VkPipeline wireframe;
+  VkPipelineLayout layout = VK_NULL_HANDLE;
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  VkPipeline shadow = VK_NULL_HANDLE;
+  VkPipeline wireframe = VK_NULL_HANDLE;
 };
 
 
@@ -74,16 +74,16 @@ class SimpleRender : public IRender
   static constexpr uint32_t POSTFX_DOWNSCALE_FACTOR = 4;
 
   static constexpr uint32_t SSAO_KERNEL_SIZE = 64;
-  static constexpr uint32_t SSAO_KERNEL_SIZE_BYTES = 4*sizeof(float)*SSAO_KERNEL_SIZE;
+  static constexpr uint32_t SSAO_KERNEL_SIZE_BYTES = sizeof(glm::vec4)*SSAO_KERNEL_SIZE;
   static constexpr uint32_t SSAO_NOISE_DIM = 8;
   static constexpr float SSAO_RADIUS = 0.5f;
   
-  static constexpr size_t SHADOW_MAP_CASCADE_COUNT = 4;
-  static constexpr size_t SHADOW_MAP_RESOLUTION = 2048;
+  static constexpr uint32_t SHADOW_MAP_CASCADE_COUNT = 4;
+  static constexpr uint32_t SHADOW_MAP_RESOLUTION = 2048;
 
-  static constexpr uint32_t RSM_KERNEL_SIZE = 64;
-  static constexpr uint32_t RSM_KERNEL_SIZE_BYTES = 4*sizeof(float)*SSAO_KERNEL_SIZE;
-  static constexpr float RSM_RADIUS = 32.f/static_cast<float>(SHADOW_MAP_RESOLUTION);
+  static constexpr uint32_t RSM_KERNEL_SIZE = 256;
+  static constexpr uint32_t RSM_KERNEL_SIZE_BYTES = sizeof(glm::vec4)*RSM_KERNEL_SIZE;
+  static constexpr float RSM_RADIUS = 0.1f;
 
   static constexpr uint32_t VSM_BLUR_RADIUS = 3;
 
@@ -192,8 +192,8 @@ protected:
   
   struct
   {
-    LiteMath::float4x4 proj;
-    LiteMath::float4x4 view;
+    glm::mat4 proj;
+    glm::mat4 view;
   } graphicsPushConsts;
 
 
@@ -225,14 +225,14 @@ protected:
 
   struct CullingPushConstants
   {
-    LiteMath::float4x4 projView;
+    glm::mat4 projView;
     uint32_t instanceCount;
     uint32_t modelCount;
   };
 
   struct LandscapeCullingPushConstants
   {
-    LiteMath::float4x4 projView;
+    glm::mat4 projView;
   };
   
   struct VisibilityInfo
@@ -348,12 +348,13 @@ protected:
 
   struct ShadowmapUbo
   {
-    std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMats;
+    std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMats;
     std::array<float, SHADOW_MAP_CASCADE_COUNT> cascadeSplitDepths;
+    std::array<float, SHADOW_MAP_CASCADE_COUNT> cascadeMatrixNorms;
   };
 
-  std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> m_cascadeViewMats;
-  std::array<LiteMath::float4x4, SHADOW_MAP_CASCADE_COUNT> m_cascadeProjMats;
+  std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> m_cascadeViewMats;
+  std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> m_cascadeProjMats;
   
   std::array<VkDescriptorSet, SHADOW_MAP_CASCADE_COUNT> m_vsmDescriptorSets;
   VkDescriptorSetLayout m_vsmDescriptorSetLayout = VK_NULL_HANDLE;

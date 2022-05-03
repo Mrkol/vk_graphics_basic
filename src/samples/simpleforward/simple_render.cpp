@@ -4,6 +4,7 @@
 #include <tuple>
 #include <span>
 #include <type_traits>
+#include <glm/ext.hpp>
 
 #include "../../utils/input_definitions.h"
 
@@ -17,8 +18,50 @@
 #endif
 
 
-static std::default_random_engine rndEngine;
+static std::default_random_engine rndEngine{};
 static std::uniform_real_distribution<float> randUNorm(0.0f, 1.0f);
+
+template<class T>
+  requires requires(T x, T y, float a) { { x + y } -> std::same_as<T>; { x * a } -> std::same_as<T>; }
+T lerp(T x, T y, float a)
+{
+	return x * (1.f - a) + (y * a);
+}
+
+float matrixNorm(const glm::mat3& mat)
+{
+  glm::mat3 A = mat*glm::transpose(mat);
+
+  
+
+  auto sq = [](auto t){ return t*t; };
+  
+  float p1 = sq(A[0][1]) + sq(A[0][2]) + sq(A[1][2]);
+
+  if (std::abs(p1) < 1e-6f)
+  {
+    return glm::sqrt(std::max(std::max(A[0][0], A[1][1]), A[2][2]));
+  }
+
+  float q = (A[0][0] + A[1][1] + A[2][2])/3;
+  float p2 = sq(A[0][0] - q) + sq(A[1][1] - q) + sq(A[2][2] - q) + 2*p1;
+  float p = std::sqrt(p2 / 6);
+  glm::mat4 B = (1 / p) * (A - q);
+  float r = glm::determinant(B) / 2;
+
+  float phi;
+  if (r <= -1.f)
+     phi = glm::pi<float>() / 3.f;
+  else if (r >= 1.f)
+     phi = 0.f;
+  else
+     phi = glm::acos(r) / 3.f;
+
+  float eig1 = q + 2.f * p * glm::cos(phi);
+  float eig3 = q + 2.f * p * glm::cos(phi + (2.f*glm::pi<float>()/3.f));
+  float eig2 = 3.f * q - eig1 - eig3;
+  return glm::sqrt(std::max(std::max(eig1, eig2), eig3));
+}
 
 
 template<class... Ts>
@@ -98,7 +141,7 @@ void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_inst
   }
 
   SetupValidationLayers();
-  VK_CHECK_RESULT(volkInitialize());
+  VK_CHECK_RESULT(volkInitialize())
   CreateInstance();
   volkLoadInstance(m_instance);
 
@@ -117,7 +160,7 @@ void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_inst
   fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
   for (size_t i = 0; i < m_framesInFlight; i++)
   {
-    VK_CHECK_RESULT(vkCreateFence(m_device, &fenceInfo, nullptr, &m_frameFences[i]));
+    VK_CHECK_RESULT(vkCreateFence(m_device, &fenceInfo, nullptr, &m_frameFences[i]))
   }
 
   m_landscapeHeightmapSampler = vk_utils::createSampler(
@@ -150,8 +193,8 @@ void SimpleRender::InitPresentation(VkSurfaceKHR &a_surface)
 
   VkSemaphoreCreateInfo semaphoreInfo = {};
   semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-  VK_CHECK_RESULT(vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_presentationResources.imageAvailable));
-  VK_CHECK_RESULT(vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_presentationResources.renderingFinished));
+  VK_CHECK_RESULT(vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_presentationResources.imageAvailable))
+  VK_CHECK_RESULT(vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_presentationResources.renderingFinished))
 
   CreateGBuffer();
   CreatePostFx();
@@ -162,14 +205,14 @@ void SimpleRender::InitPresentation(VkSurfaceKHR &a_surface)
 
 void SimpleRender::CreateInstance()
 {
-  VkApplicationInfo appInfo = {};
-  appInfo.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-  appInfo.pNext              = nullptr;
-  appInfo.pApplicationName   = "VkRender";
-  appInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-  appInfo.pEngineName        = "SimpleForward";
-  appInfo.engineVersion      = VK_MAKE_VERSION(0, 1, 0);
-  appInfo.apiVersion         = VK_MAKE_VERSION(1, 2, 0);
+  VkApplicationInfo appInfo {
+    .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+    .pApplicationName   = "VkRender",
+    .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
+    .pEngineName        = "SimpleForward",
+    .engineVersion      = VK_MAKE_VERSION(0, 1, 0),
+    .apiVersion         = VK_MAKE_VERSION(1, 2, 0),
+  };
 
   m_instance = vk_utils::createInstance(m_enableValidation, m_validationLayers, m_instanceExtensions, &appInfo);
 
@@ -261,14 +304,14 @@ void SimpleRender::SetupStaticMeshPipeline()
 
       maker.LoadShaders(m_device, shader_paths);
 
-      SceneGeometryPipeline result;
+      SceneGeometryPipeline result{};
     
       result.layout = maker.MakeLayout(m_device,
         {m_graphicsDescriptorSetLayout, m_graphicsVisibilityDescriptorSetLayout}, sizeof(graphicsPushConsts));
 
       maker.SetDefaultState(m_width, m_height);
       
-      std::array<VkPipelineColorBlendAttachmentState, 3> cba_state;
+      std::array<VkPipelineColorBlendAttachmentState, 3> cba_state{{}};
 
       cba_state.fill(VkPipelineColorBlendAttachmentState {
           .blendEnable    = VK_FALSE,
@@ -342,7 +385,7 @@ void SimpleRender::SetupLandscapePipeline()
     [this](std::unordered_map<VkShaderStageFlagBits, std::string> shader_paths,
       uint32_t controlPoints)
     {
-      SceneGeometryPipeline result;
+      SceneGeometryPipeline result{};
 
       vk_utils::GraphicsPipelineMaker maker;
 
@@ -353,7 +396,7 @@ void SimpleRender::SetupLandscapePipeline()
       
       maker.SetDefaultState(m_width, m_height);
       
-      std::array<VkPipelineColorBlendAttachmentState, 3> cba_state;
+      std::array<VkPipelineColorBlendAttachmentState, 3> cba_state{{}};
 
       cba_state.fill(VkPipelineColorBlendAttachmentState {
           .blendEnable    = VK_FALSE,
@@ -525,7 +568,7 @@ void SimpleRender::SetupLightingPipeline()
       },
     };
 
-    std::array<VkWriteDescriptorSet, image_infos.size()> writes;
+    std::array<VkWriteDescriptorSet, image_infos.size()> writes{{}};
 
     for (std::size_t i = 0; i < image_infos.size(); ++i)
     {
@@ -590,7 +633,7 @@ void SimpleRender::SetupLightingPipeline()
 
   
   auto specData = std::tuple<uint32_t, uint32_t>(SHADOW_MAP_CASCADE_COUNT, RSM_KERNEL_SIZE);
-  std::array<VkSpecializationMapEntry, 2> specMap;
+  std::array<VkSpecializationMapEntry, 2> specMap{{}};
   VkSpecializationInfo specInfo;
   makeSpecMap(specData, specMap, specInfo);
 
@@ -618,7 +661,7 @@ void SimpleRender::SetupLightingPipeline()
 
 
   auto specData2 = std::tuple<uint32_t>(VSM_BLUR_RADIUS);
-  std::array<VkSpecializationMapEntry, 1> specMap2;
+  std::array<VkSpecializationMapEntry, 1> specMap2{{}};
   VkSpecializationInfo specInfo2;
   makeSpecMap(specData2, specMap2, specInfo2);
   
@@ -809,7 +852,7 @@ void SimpleRender::SetupPostfxPipeline()
     });
 
     auto specData = std::tuple<uint32_t, uint32_t>(SHADOW_MAP_CASCADE_COUNT, RSM_KERNEL_SIZE);
-    std::array<VkSpecializationMapEntry, 2> specMap;
+    std::array<VkSpecializationMapEntry, 2> specMap{{}};
     VkSpecializationInfo specInfo;
     makeSpecMap(specData, specMap, specInfo);
 
@@ -841,7 +884,7 @@ void SimpleRender::SetupPostfxPipeline()
       });
     
     auto specData = std::tuple<uint32_t, float>(SSAO_KERNEL_SIZE, SSAO_RADIUS);
-    std::array<VkSpecializationMapEntry, 2> specMap;
+    std::array<VkSpecializationMapEntry, 2> specMap{{}};
     VkSpecializationInfo specInfo;
     makeSpecMap(specData, specMap, specInfo);
 
@@ -960,7 +1003,7 @@ void SimpleRender::CreateUniformBuffer()
   m_uboMappedMem = static_cast<std::byte*>(mappedMem) + offsets[0];
   m_shadowmapUboMappedMem = static_cast<std::byte*>(mappedMem) + offsets[1];
 
-  m_uniforms.baseColor = LiteMath::float3(0.9f, 0.92f, 1.0f);
+  m_uniforms.baseColor = glm::vec3(0.9f, 0.92f, 1.0f);
   m_uniforms.animateLightColor = false;
   m_uniforms.postFxDownscaleFactor = POSTFX_DOWNSCALE_FACTOR;
 
@@ -1015,7 +1058,7 @@ void SimpleRender::CreateUniformBuffer()
     for (uint32_t i = 0; i < SSAO_KERNEL_SIZE; ++i)
     {
       auto sample =
-          normalize(float3(randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine)));
+          normalize(glm::vec3(randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine)));
       const float scale = static_cast<float>(i) / static_cast<float>(SSAO_KERNEL_SIZE);
       sample *= lerp(0.1f, 1.0f, randUNorm(rndEngine) * scale * scale);
       ssaoKernel[i] = LiteMath::float4(sample.x, sample.y, sample.z, 0.0f);
@@ -1024,13 +1067,17 @@ void SimpleRender::CreateUniformBuffer()
   }
 
   {
-    std::vector<LiteMath::float4> rsmKernel(RSM_KERNEL_SIZE);
+    std::vector<glm::vec4> rsmKernel(RSM_KERNEL_SIZE);
     
     for (uint32_t i = 0; i < SSAO_KERNEL_SIZE; ++i)
     {
       float xi1 = randUNorm(rndEngine);
       float xi2 = randUNorm(rndEngine);
-      rsmKernel[i] = float4(RSM_RADIUS*xi1*std::sin(xi2*2*M_PI), RSM_RADIUS*xi1*std::cos(xi2*2*M_PI), xi2*xi2, 0);
+      rsmKernel[i] = glm::vec4(
+          RSM_RADIUS*xi1*std::sin(xi2*2*glm::pi<float>()),
+          RSM_RADIUS*xi1*std::cos(xi2*2*glm::pi<float>()),
+          xi2*xi2,
+          0);
     }
 
     m_pScnMgr->GetCopyHelper()->UpdateBuffer(m_rsmKernel, 0, rsmKernel.data(), rsmKernel.size()*sizeof(rsmKernel[0]));
@@ -1043,7 +1090,7 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.time = a_time;
   m_uniforms.screenWidth = static_cast<float>(m_width);
   m_uniforms.screenHeight = static_cast<float>(m_height);
-  m_uniforms.lightPos = float3(0, std::sin(m_sunAngle), std::cos(m_sunAngle))*10000;
+  m_uniforms.lightPos = glm::vec3(0, std::sin(m_sunAngle), std::cos(m_sunAngle))*10000.f;
   m_uniforms.enableLandscapeShadows = m_landscapeShadows;
   m_uniforms.enableSsao = m_ssao;
   m_uniforms.tonemappingMode = static_cast<uint32_t>(m_tonemappingMode);
@@ -1056,7 +1103,7 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
 void SimpleRender::RecordStaticMeshCulling(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo)
 {
   cmdBeginRegion(a_cmdBuff, "Static mesh culling");
-  vkCmdFillBuffer(a_cmdBuff, visInfo.instanceMappingBuffer, 0, sizeof(uint), 0);
+  vkCmdFillBuffer(a_cmdBuff, visInfo.instanceMappingBuffer, 0, sizeof(uint32_t), 0);
 
   {
     std::array bufferMemBarriers
@@ -1067,7 +1114,7 @@ void SimpleRender::RecordStaticMeshCulling(VkCommandBuffer a_cmdBuff, Visibility
         .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
         .buffer = visInfo.instanceMappingBuffer,
         .offset = 0,
-        .size = sizeof(uint)
+        .size = sizeof(uint32_t)
       }
     };
 
@@ -1131,7 +1178,7 @@ void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff, VisibilityI
 
   for (auto& buf : visInfo.landscapeTileBuffers)
   {
-    vkCmdFillBuffer(a_cmdBuff, buf, 0, sizeof(uint), 0);
+    vkCmdFillBuffer(a_cmdBuff, buf, 0, sizeof(uint32_t), 0);
   }
 
   {
@@ -1146,7 +1193,7 @@ void SimpleRender::RecordLandscapeCulling(VkCommandBuffer a_cmdBuff, VisibilityI
         .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
         .buffer = buf,
         .offset = 0,
-        .size = sizeof(uint)
+        .size = sizeof(uint32_t)
       });
     }
 
@@ -1362,12 +1409,12 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
       vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
           | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
-            0, sizeof(LiteMath::float4x4), &m_cascadeProjMats[i]);
+            0, sizeof(glm::mat4), &m_cascadeProjMats[i]);
 
       vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
           | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
-            sizeof(LiteMath::float4x4), sizeof(LiteMath::float4x4), &m_cascadeViewMats[i]);
+            sizeof(glm::mat4), sizeof(glm::mat4), &m_cascadeViewMats[i]);
 
       RecordStaticMeshRendering(a_cmdBuff, m_cascadeVisInfo[i], true);
 
@@ -1415,7 +1462,7 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
 
-  VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo));
+  VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo))
 
   RecordShadowmapRendering(a_cmdBuff);
 
@@ -1552,7 +1599,7 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
     vkCmdEndRenderPass(a_cmdBuff);
   }
 
-  VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff));
+  VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff))
 }
 
 
@@ -1611,7 +1658,7 @@ void SimpleRender::RecreateSwapChain()
   fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
   for (size_t i = 0; i < m_framesInFlight; i++)
   {
-    VK_CHECK_RESULT(vkCreateFence(m_device, &fenceInfo, nullptr, &m_frameFences[i]));
+    VK_CHECK_RESULT(vkCreateFence(m_device, &fenceInfo, nullptr, &m_frameFences[i]))
   }
 
   m_cmdBuffersDrawMain = vk_utils::createCommandBuffers(m_device, m_commandPool, m_framesInFlight);
@@ -1795,9 +1842,10 @@ void SimpleRender::UpdateView()
   const float aspect   = float(m_width) / float(m_height);
   const float nearClip = 0.1f;
   const float farClip = 500.0f;
-  const auto mProjFix        = OpenglToVulkanProjectionMatrixFix();
-  const auto mProj           = projectionMatrix(m_cam.fov, aspect, nearClip, farClip);
-  const auto mLookAt         = LiteMath::lookAt(m_cam.pos, m_cam.lookAt, m_cam.up);
+  
+  const auto mProjFix        = glm::scale(glm::identity<glm::mat4>(), glm::vec3(1, -1, 1));
+  const auto mProj           = glm::perspective(glm::radians(m_cam.fov), aspect, nearClip, farClip);
+  const auto mLookAt         = glm::lookAt(m_cam.pos, m_cam.lookAt, m_cam.up);
   const auto mWorldViewProj  = mProjFix * mProj * mLookAt;
   graphicsPushConsts.proj = mProjFix * mProj;
   graphicsPushConsts.view = mLookAt;
@@ -1806,7 +1854,7 @@ void SimpleRender::UpdateView()
   m_mainVisInfo.landscapeCullingPushConsts.projView = mWorldViewProj;
 
   {
-    const auto lightDir = normalize(-1*float3(0, std::sin(m_sunAngle), std::cos(m_sunAngle)));
+    const auto lightDir = glm::normalize(-glm::vec3(0, std::sin(m_sunAngle), std::cos(m_sunAngle)));
     const float clipRange = farClip - nearClip;
 
     const float minZ = nearClip;
@@ -1815,7 +1863,7 @@ void SimpleRender::UpdateView()
     const float range = maxZ - minZ;
     const float ratio = maxZ / minZ;
 
-    std::array<float, SHADOW_MAP_CASCADE_COUNT> cascadeSplits;
+    std::array<float, SHADOW_MAP_CASCADE_COUNT> cascadeSplits{0};
 
     // Calculate split depths based on view camera frustum
     // Based on method presented in https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
@@ -1833,21 +1881,21 @@ void SimpleRender::UpdateView()
 			const float splitDist = cascadeSplits[i];
 
 			std::array frustumCorners {
-				float3(-1.0f,  1.0f,  0.0f),
-				float3( 1.0f,  1.0f,  0.0f),
-				float3( 1.0f, -1.0f,  0.0f),
-				float3(-1.0f, -1.0f,  0.0f),
-				float3(-1.0f,  1.0f,  1.0f),
-				float3( 1.0f,  1.0f,  1.0f),
-				float3( 1.0f, -1.0f,  1.0f),
-				float3(-1.0f, -1.0f,  1.0f),
+				glm::vec3(-1.0f,  1.0f,  0.0f),
+				glm::vec3( 1.0f,  1.0f,  0.0f),
+				glm::vec3( 1.0f, -1.0f,  0.0f),
+				glm::vec3(-1.0f, -1.0f,  0.0f),
+				glm::vec3(-1.0f,  1.0f,  1.0f),
+				glm::vec3( 1.0f,  1.0f,  1.0f),
+				glm::vec3( 1.0f, -1.0f,  1.0f),
+				glm::vec3(-1.0f, -1.0f,  1.0f),
 			};
 
 			// Project frustum corners into world space
-			const auto invCam = LiteMath::inverse4x4(mWorldViewProj);
+			const auto invCam = glm::inverse(mWorldViewProj);
 			for (auto& corner : frustumCorners) {
-				auto invCorner = invCam * float4(corner.x, corner.y, corner.z, 1.0f);
-				corner = float3(invCorner.x, invCorner.y, invCorner.z) / invCorner.w;
+				auto invCorner = invCam * glm::vec4(corner, 1.0f);
+				corner = glm::vec3(invCorner) / invCorner.w;
 			}
 
 			for (size_t j = 0; j < 4; j++) {
@@ -1857,7 +1905,7 @@ void SimpleRender::UpdateView()
 			}
 
 			// Get frustum center
-			auto frustumCenter = float3(0.0f);
+			auto frustumCenter = glm::vec3(0.0f);
 			for (auto& corner : frustumCorners) {
 				frustumCenter += corner;
 			}
@@ -1870,16 +1918,16 @@ void SimpleRender::UpdateView()
 			}
 			radius = std::ceil(radius * 16.0f) / 16.0f;
 
-			const auto maxExtents = float3(radius);
-			const auto minExtents = float3(0,0,0) - maxExtents;
+			const auto maxExtents = glm::vec3(radius);
+			const auto minExtents = glm::vec3(0) - maxExtents;
 
             
 			const auto lightViewMatrix =
-        LiteMath::lookAt(frustumCenter - lightDir * -minExtents.z, frustumCenter, float3(0.0f, 1.0f, 0.0f));
+        glm::lookAt(frustumCenter - lightDir * -minExtents.z, frustumCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 			const auto lightOrthoMatrix =
-        ortoMatrix(minExtents.x, maxExtents.x,
+        glm::ortho(minExtents.x, maxExtents.x,
             minExtents.y, maxExtents.y,
-            -100, maxExtents.z - minExtents.z);
+            -100.f, maxExtents.z - minExtents.z);
 
 			// Store split distance and matrix in cascade
 
@@ -1890,6 +1938,8 @@ void SimpleRender::UpdateView()
 
       m_shadowmapUboData.cascadeViewProjMats[i] = viewProj;
       m_shadowmapUboData.cascadeSplitDepths[i] = (nearClip + splitDist * clipRange) * -1.0f;
+      m_shadowmapUboData.cascadeMatrixNorms[i] = matrixNorm(viewProj);
+      
       
       m_cascadeVisInfo[i].cullingPushConsts.projView = viewProj;
       m_cascadeVisInfo[i].landscapeCullingPushConsts.projView = viewProj;
@@ -1920,9 +1970,9 @@ void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
 
   auto loadedCam = m_pScnMgr->GetCamera(0);
   m_cam.fov = loadedCam.fov;
-  m_cam.pos = float3(loadedCam.pos);
-  m_cam.up  = float3(loadedCam.up);
-  m_cam.lookAt = float3(loadedCam.lookAt);
+  m_cam.pos = glm::vec3(loadedCam.pos[0], loadedCam.pos[1], loadedCam.pos[2]);
+  m_cam.up  = glm::vec3(loadedCam.up[0], loadedCam.up[1], loadedCam.up[2]);
+  m_cam.lookAt = glm::vec3(loadedCam.lookAt[0], loadedCam.lookAt[1], loadedCam.lookAt[2]);
   m_cam.tdist  = loadedCam.farPlane;
 
   UpdateView();
@@ -2008,7 +2058,7 @@ void SimpleRender::DrawFrameSimple()
   submitInfo.signalSemaphoreCount = 1;
   submitInfo.pSignalSemaphores = signalSemaphores;
 
-  VK_CHECK_RESULT(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_frameFences[m_presentationResources.currentFrame]));
+  VK_CHECK_RESULT(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_frameFences[m_presentationResources.currentFrame]))
 
   VkResult presentRes = m_swapchain.QueuePresent(m_presentationResources.queue, imageIdx,
                                                  m_presentationResources.renderingFinished);
@@ -2168,7 +2218,7 @@ void SimpleRender::DrawFrameWithGUI()
   submitInfo.signalSemaphoreCount = 1;
   submitInfo.pSignalSemaphores = signalSemaphores;
 
-  VK_CHECK_RESULT(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_frameFences[m_presentationResources.currentFrame]));
+  VK_CHECK_RESULT(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_frameFences[m_presentationResources.currentFrame]))
 
   VkResult presentRes = m_swapchain.QueuePresent(m_presentationResources.queue, imageIdx,
     m_presentationResources.renderingFinished);
@@ -2365,7 +2415,7 @@ void SimpleRender::CreateGBuffer()
 
   // Renderpass
   {
-    std::array<VkAttachmentDescription, layers.size() + 2> attachmentDescs;
+    std::array<VkAttachmentDescription, layers.size() + 2> attachmentDescs{{}};
 
     attachmentDescs.fill(VkAttachmentDescription {
         .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -2394,7 +2444,7 @@ void SimpleRender::CreateGBuffer()
       present.format = m_gbuffer.resolved.format;
     }
 
-    std::array<VkAttachmentReference, layers.size()> gBufferColorRefs;
+    std::array<VkAttachmentReference, layers.size()> gBufferColorRefs{{}};
     for (std::size_t i = 0; i < layers.size(); ++i)
     {
       gBufferColorRefs[i] = VkAttachmentReference
@@ -2409,7 +2459,7 @@ void SimpleRender::CreateGBuffer()
         {static_cast<uint32_t>(layers.size() + 1), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}
     };
 
-    std::array<VkAttachmentReference, layers.size() + 1> resolveInputRefs;
+    std::array<VkAttachmentReference, layers.size() + 1> resolveInputRefs{{}};
     for (std::size_t i = 0; i <= layers.size(); ++i)
     {
       resolveInputRefs[i] = VkAttachmentReference
@@ -2473,7 +2523,7 @@ void SimpleRender::CreateGBuffer()
   }
 
   // Framebuffer
-  std::array<VkImageView, layers.size() + 2> attachments;
+  std::array<VkImageView, layers.size() + 2> attachments{VK_NULL_HANDLE};
   for (std::size_t j = 0; j < layers.size(); ++j)
   {
     attachments[j] = m_gbuffer.color_layers[j].image.view;
@@ -2492,7 +2542,7 @@ void SimpleRender::CreateGBuffer()
     .height = m_height,
     .layers = 1,
   };
-  VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_mainPassFrameBuffer));
+  VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_mainPassFrameBuffer))
 }
 
 void SimpleRender::CreatePostFx()
@@ -2508,10 +2558,10 @@ void SimpleRender::CreatePostFx()
     &m_ssaoImage);
 
   {
-    std::vector<LiteMath::float2> ssaoNoise(SSAO_NOISE_DIM * SSAO_NOISE_DIM);
+    std::vector<glm::vec2> ssaoNoise(SSAO_NOISE_DIM * SSAO_NOISE_DIM);
     for (uint32_t i = 0; i < static_cast<uint32_t>(ssaoNoise.size()); i++)
     {
-      ssaoNoise[i] = LiteMath::float2(randUNorm(rndEngine) * 2.0f - 1.0f, randUNorm(rndEngine) * 2.0f - 1.0f);
+      ssaoNoise[i] = glm::vec2(randUNorm(rndEngine) * 2.0f - 1.0f, randUNorm(rndEngine) * 2.0f - 1.0f);
     }
 
     m_ssaoNoise = vk_utils::allocateColorTextureFromDataLDR(m_device, m_physicalDevice,
@@ -2666,7 +2716,7 @@ void SimpleRender::CreatePostFx()
       .layers = 1,
     };
 
-    VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_framebuffers[i]));
+    VK_CHECK_RESULT(vkCreateFramebuffer(m_device, &fbufCreateInfo, nullptr, &m_framebuffers[i]))
   }
 
   {
