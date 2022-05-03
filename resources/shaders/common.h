@@ -40,6 +40,7 @@ struct UniformParams
   uint postFxDownscaleFactor;
   uint tonemappingMode;
   float exposure;
+  BOOL enableRsm;
 };
 
 #undef PAD

@@ -33,5 +33,5 @@ layout (location = 0) out vec4 outNormal;
 
 void main()
 {
-    outNormal = vec4(surf.cNorm, shadingModel);
+    outNormal = vec4((params.mProj * vec4(surf.cNorm, 0.0)).xyz, shadingModel);
 }

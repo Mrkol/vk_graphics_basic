@@ -2,6 +2,7 @@
 #define VK_GRAPHICS_BASIC_SHADOWMAP_H
 
 layout (constant_id = 0) const uint SHADOW_MAP_CASCADE_COUNT = 4;
+layout (constant_id = 1) const uint RSM_KERNEL_SIZE = 64;
 
 
 layout (set = 1, binding = 4) uniform sampler2DArray inShadowmaps;
@@ -11,6 +12,13 @@ layout (set = 1, binding = 5) uniform ShadowmapUBO
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	vec4 cascadeSplitDepths[SHADOW_MAP_CASCADE_COUNT/4];
 } shadowmapUbo;
+
+layout (set = 1, binding = 6) uniform sampler2DArray inRsmNormal;
+layout (set = 1, binding = 7) uniform RsmKernel
+{
+	// x, y, weight
+	vec4 samples[RSM_KERNEL_SIZE];
+} rsmKernel;
 
 
 const mat4 biasMat = mat4( 
@@ -50,8 +58,10 @@ float shade(vec3 wPos, uint cascadeIndex)
 uint cascadeForDepth(float z)
 {
 	uint cascadeIndex = 0;
-	for(uint i = 0; i < SHADOW_MAP_CASCADE_COUNT - 1; ++i) {
-		if(z < shadowmapUbo.cascadeSplitDepths[i/4][i%4]) {	
+	for(uint i = 0; i < SHADOW_MAP_CASCADE_COUNT - 1; ++i)
+	{
+		if(z < shadowmapUbo.cascadeSplitDepths[i/4][i%4])
+		{
 			cascadeIndex = i + 1;
 		}
 	}

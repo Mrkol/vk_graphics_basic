@@ -126,6 +126,9 @@ void SimpleRender::InitVulkan(const char** a_instanceExtensions, uint32_t a_inst
   m_shadowmapSampler = vk_utils::createSampler(
     m_device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
     VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
+  m_vsmSampler = vk_utils::createSampler(
+    m_device, VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+    VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
   m_noiseSampler = vk_utils::createSampler(
     m_device, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT,
     VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK);
@@ -279,19 +282,22 @@ void SimpleRender::SetupStaticMeshPipeline()
       
       result.pipeline = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
         m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
-
-      shader_paths.erase(VK_SHADER_STAGE_FRAGMENT_BIT);
+      
+      shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv";
+      shader_paths[VK_SHADER_STAGE_GEOMETRY_BIT] = std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv";
       maker.LoadShaders(m_device, shader_paths);
+      result.wireframe = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
+        m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
 
+
+      shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = std::string{WRITE_RSM_FRAGMENT_SHADER_PATH} + ".spv";
+      shader_paths.erase(VK_SHADER_STAGE_GEOMETRY_BIT);
+      maker.LoadShaders(m_device, shader_paths);
+      maker.colorBlending.attachmentCount = 1;
       result.shadow = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
         m_shadowmapRenderPass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
       
-      shader_paths.emplace(VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv");
-      shader_paths.emplace(VK_SHADER_STAGE_GEOMETRY_BIT, std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv");
-      maker.LoadShaders(m_device, shader_paths);
 
-      result.wireframe = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
-        m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
 
       return result;
     };
@@ -416,19 +422,8 @@ void SimpleRender::SetupLandscapePipeline()
         nullptr, &result.pipeline))
       clearModules();
 
-
-      shader_paths.erase(VK_SHADER_STAGE_FRAGMENT_BIT);
-      maker.LoadShaders(m_device, shader_paths);
-      pipelineInfo.stageCount = static_cast<uint32_t>(shader_paths.size());
-      pipelineInfo.renderPass = m_shadowmapRenderPass;
-
-      VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
-        nullptr, &result.shadow))
-      clearModules();
-
-
-      shader_paths.emplace(VK_SHADER_STAGE_FRAGMENT_BIT, std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv");
-      shader_paths.emplace(VK_SHADER_STAGE_GEOMETRY_BIT, std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv");
+      shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = std::string{WIREFRAME_FRAGMENT_SHADER_PATH} + ".spv";
+      shader_paths[VK_SHADER_STAGE_GEOMETRY_BIT] = std::string{WIREFRAME_GEOMETRY_SHADER_PATH} + ".spv";
       maker.LoadShaders(m_device, shader_paths);
       pipelineInfo.stageCount = static_cast<uint32_t>(shader_paths.size());
       pipelineInfo.renderPass = m_gbuffer.renderpass;
@@ -436,6 +431,18 @@ void SimpleRender::SetupLandscapePipeline()
       VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
         nullptr, &result.wireframe))
       clearModules();
+
+      shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = std::string{WRITE_RSM_FRAGMENT_SHADER_PATH} + ".spv";
+      shader_paths.erase(VK_SHADER_STAGE_GEOMETRY_BIT);
+      maker.LoadShaders(m_device, shader_paths);
+      pipelineInfo.stageCount = static_cast<uint32_t>(shader_paths.size());
+      pipelineInfo.renderPass = m_shadowmapRenderPass;
+      maker.colorBlending.attachmentCount = 1;
+
+      VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
+        nullptr, &result.shadow))
+      clearModules();
+
 
       return result;
     };
@@ -477,8 +484,10 @@ void SimpleRender::SetupLightingPipeline()
       nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
     bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
       nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
-    bindings.BindImage(4, m_vsm.view, m_shadowmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(4, m_vsm.view, m_vsmSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     bindings.BindBuffer(5, m_shadowmapUbo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    bindings.BindImage(6, m_rsmNormals.view, m_vsmSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindBuffer(7, m_rsmKernel, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     bindings.BindEnd(&m_lightingFragmentDescriptorSet, &m_lightingFragmentDescriptorSetLayout);
   }
   else
@@ -505,8 +514,13 @@ void SimpleRender::SetupLightingPipeline()
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
       VkDescriptorImageInfo {
-        .sampler = m_shadowmapSampler,
+        .sampler = m_vsmSampler,
         .imageView = m_vsm.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_vsmSampler,
+        .imageView = m_rsmNormals.view,
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
     };
@@ -524,7 +538,9 @@ void SimpleRender::SetupLightingPipeline()
         .pImageInfo = image_infos.data() + i
       };
     }
-    writes.back().descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[5].dstBinding = 6;
 
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
@@ -573,8 +589,8 @@ void SimpleRender::SetupLightingPipeline()
     });
 
   
-  auto specData = std::tuple<uint32_t>(SHADOW_MAP_CASCADE_COUNT);
-  std::array<VkSpecializationMapEntry, 1> specMap;
+  auto specData = std::tuple<uint32_t, uint32_t>(SHADOW_MAP_CASCADE_COUNT, RSM_KERNEL_SIZE);
+  std::array<VkSpecializationMapEntry, 2> specMap;
   VkSpecializationInfo specInfo;
   makeSpecMap(specData, specMap, specInfo);
 
@@ -792,6 +808,20 @@ void SimpleRender::SetupPostfxPipeline()
       {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{FOG_FRAGMENT_SHADER_PATH} + ".spv"},
     });
 
+    auto specData = std::tuple<uint32_t, uint32_t>(SHADOW_MAP_CASCADE_COUNT, RSM_KERNEL_SIZE);
+    std::array<VkSpecializationMapEntry, 2> specMap;
+    VkSpecializationInfo specInfo;
+    makeSpecMap(specData, specMap, specInfo);
+
+    for (auto& info : maker.shaderStageInfos)
+    {
+      if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+      {
+        info.pSpecializationInfo = &specInfo;
+        break;
+      }
+    }
+
     m_fogPipeline.layout = maker.MakeLayout(m_device,
       {m_fogDescriptorSetLayout, m_lightingFragmentDescriptorSetLayout}, sizeof(graphicsPushConsts));
     
@@ -941,8 +971,12 @@ void SimpleRender::CreateUniformBuffer()
   m_ssaoKernel = vk_utils::createBuffer(m_device,
       SSAO_KERNEL_SIZE_BYTES,
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  m_rsmKernel = vk_utils::createBuffer(m_device,
+      RSM_KERNEL_SIZE_BYTES,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
   allBuffers.emplace_back(m_ssaoKernel);
+  allBuffers.emplace_back(m_rsmKernel);
 
   for (auto* visInfo : m_visibilityInfos)
   {
@@ -976,17 +1010,31 @@ void SimpleRender::CreateUniformBuffer()
       allBuffers, VkMemoryAllocateFlags{});
 
 
-
-  std::vector<LiteMath::float4> ssaoKernel(SSAO_KERNEL_SIZE);
-  for (uint32_t i = 0; i < SSAO_KERNEL_SIZE; ++i)
   {
-    auto sample =
-        normalize(float3(randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine)));
-    const float scale = static_cast<float>(i) / static_cast<float>(SSAO_KERNEL_SIZE);
-    sample *= lerp(0.1f, 1.0f, randUNorm(rndEngine) * scale * scale);
-    ssaoKernel[i] = LiteMath::float4(sample.x, sample.y, sample.z, 0.0f);
+    std::vector<LiteMath::float4> ssaoKernel(SSAO_KERNEL_SIZE);
+    for (uint32_t i = 0; i < SSAO_KERNEL_SIZE; ++i)
+    {
+      auto sample =
+          normalize(float3(randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine) * 2.f - 1.f, randUNorm(rndEngine)));
+      const float scale = static_cast<float>(i) / static_cast<float>(SSAO_KERNEL_SIZE);
+      sample *= lerp(0.1f, 1.0f, randUNorm(rndEngine) * scale * scale);
+      ssaoKernel[i] = LiteMath::float4(sample.x, sample.y, sample.z, 0.0f);
+    }
+    m_pScnMgr->GetCopyHelper()->UpdateBuffer(m_ssaoKernel, 0, ssaoKernel.data(), ssaoKernel.size()*sizeof(ssaoKernel[0]));
   }
-  m_pScnMgr->GetCopyHelper()->UpdateBuffer(m_ssaoKernel, 0, ssaoKernel.data(), ssaoKernel.size()*sizeof(ssaoKernel[0]));
+
+  {
+    std::vector<LiteMath::float4> rsmKernel(RSM_KERNEL_SIZE);
+    
+    for (uint32_t i = 0; i < SSAO_KERNEL_SIZE; ++i)
+    {
+      float xi1 = randUNorm(rndEngine);
+      float xi2 = randUNorm(rndEngine);
+      rsmKernel[i] = float4(RSM_RADIUS*xi1*std::sin(xi2*2*M_PI), RSM_RADIUS*xi1*std::cos(xi2*2*M_PI), xi2*xi2, 0);
+    }
+
+    m_pScnMgr->GetCopyHelper()->UpdateBuffer(m_rsmKernel, 0, rsmKernel.data(), rsmKernel.size()*sizeof(rsmKernel[0]));
+  }
 }
 
 void SimpleRender::UpdateUniformBuffer(float a_time)
@@ -1000,6 +1048,7 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.enableSsao = m_ssao;
   m_uniforms.tonemappingMode = static_cast<uint32_t>(m_tonemappingMode);
   m_uniforms.exposure = m_exposure;
+  m_uniforms.enableRsm = m_rsm;
   std::memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
   std::memcpy(m_shadowmapUboMappedMem, &m_shadowmapUboData, sizeof(m_shadowmapUboData));
 }
@@ -1289,8 +1338,13 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
     RecordStaticMeshCulling(a_cmdBuff, m_cascadeVisInfo[i]);
     RecordLandscapeCulling(a_cmdBuff, m_cascadeVisInfo[i]);
 
-    VkClearValue depthClear {
-      .depthStencil = {1.0f, 0}
+    std::array clears{
+      VkClearValue{
+        .depthStencil = {1.0f, 0}
+      },
+      VkClearValue{
+        .color = {{0.f, 0.f, 0.f, 0.f}}
+      },
     };
     VkRenderPassBeginInfo shadowPassInfo {
       .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -1300,8 +1354,8 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
         .offset = {0, 0},
         .extent = {SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION},
       },
-      .clearValueCount = 1,
-      .pClearValues = &depthClear,
+      .clearValueCount = static_cast<uint32_t>(clears.size()),
+      .pClearValues = clears.data(),
     };
     vkCmdBeginRenderPass(a_cmdBuff, &shadowPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     {
@@ -1588,6 +1642,12 @@ void SimpleRender::Cleanup()
     m_shadowmapSampler = nullptr;
   }
 
+  if (m_vsmSampler != VK_NULL_HANDLE)
+  {
+    vkDestroySampler(m_device, m_vsmSampler, nullptr);
+    m_vsmSampler = nullptr;
+  }
+
   if (m_noiseSampler != VK_NULL_HANDLE)
   {
     vkDestroySampler(m_device, m_noiseSampler, nullptr);
@@ -1629,6 +1689,12 @@ void SimpleRender::Cleanup()
   {
     vkDestroyBuffer(m_device, m_ssaoKernel, nullptr);
     m_ssaoKernel = VK_NULL_HANDLE;
+  }
+
+  if (m_rsmKernel != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_rsmKernel, nullptr);
+    m_rsmKernel = VK_NULL_HANDLE;
   }
 
   for (auto* visInfo : m_visibilityInfos)
@@ -1993,6 +2059,7 @@ void SimpleRender::SetupGUIElements()
     ImGui::Checkbox("Wireframe", &m_wireframe);
     ImGui::Checkbox("Landscape Shadows", &m_landscapeShadows);
     ImGui::Checkbox("Screenspace ambient occlusion", &m_ssao);
+    ImGui::Checkbox("Reflective shadow maps", &m_rsm);
 
     static const std::array tmNames{"None", "Reinhard", "Hable Filmic", "Exposure", "Approximate ACES"};
     ImGui::Combo("Tone mapping", &m_tonemappingMode, tmNames.data(), static_cast<int>(tmNames.size()));
@@ -2707,13 +2774,28 @@ void SimpleRender::CreateShadowmaps()
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
+      VkAttachmentDescription{
+        .format = rsmNormalsFormat,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
     };
 
     VkAttachmentReference depthAttachmentRef{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    std::array colorAttachments{
+      VkAttachmentReference{1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+    };
     
     std::array subpasses {
       VkSubpassDescription {
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = static_cast<uint32_t>(colorAttachments.size()),
+        .pColorAttachments = colorAttachments.data(),
         .pDepthStencilAttachment = &depthAttachmentRef,
       },
     };
@@ -2801,18 +2883,31 @@ void SimpleRender::CreateShadowmaps()
 
   for (size_t i = 0; i < m_cascadeViews.size(); ++i)
   {
+    std::array attachments{m_cascadeViews[i], m_rsmNormalViews[i]};
+
     VkFramebufferCreateInfo fbufInfo{
       .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
       .renderPass = m_shadowmapRenderPass,
-      .attachmentCount = 1,
-      .pAttachments = &m_cascadeViews[i],
+      .attachmentCount = static_cast<uint32_t>(attachments.size()),
+      .pAttachments = attachments.data(),
       .width = SHADOW_MAP_RESOLUTION,
       .height = SHADOW_MAP_RESOLUTION,
       .layers = 1,
     };
     vkCreateFramebuffer(m_device, &fbufInfo, nullptr, &m_cascadeFramebuffers[i]);
-    fbufInfo.renderPass = m_vsmRenderPass;
-    fbufInfo.pAttachments = &m_vsmViews[i];
+  }
+
+  for (size_t i = 0; i < m_cascadeViews.size(); ++i)
+  {
+    VkFramebufferCreateInfo fbufInfo{
+      .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+      .renderPass = m_vsmRenderPass,
+      .attachmentCount = 1,
+      .pAttachments = &m_vsmViews[i],
+      .width = SHADOW_MAP_RESOLUTION,
+      .height = SHADOW_MAP_RESOLUTION,
+      .layers = 1,
+    };
     vkCreateFramebuffer(m_device, &fbufInfo, nullptr, &m_vsmFramebuffers[i]);
   }
 }

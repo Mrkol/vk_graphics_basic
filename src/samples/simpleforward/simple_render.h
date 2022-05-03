@@ -42,6 +42,8 @@ class SimpleRender : public IRender
   static constexpr char const* STATIC_MESH_VERTEX_SHADER_PATH = "../resources/shaders/geometry/static_mesh.vert";
   static constexpr char const* WRITE_GBUF_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/write_gbuffer.frag";
 
+  static constexpr char const* WRITE_RSM_FRAGMENT_SHADER_PATH = "../resources/shaders/geometry/rsm.frag";
+
   static constexpr char const* LANDSCAPE_VERTEX_SHADER_PATH = "../resources/shaders/geometry/landscape.vert";
   static constexpr char const* LANDSCAPE_TESC_SHADER_PATH = "../resources/shaders/geometry/landscape.tesc";
   static constexpr char const* LANDSCAPE_TESE_SHADER_PATH = "../resources/shaders/geometry/landscape.tese";
@@ -78,6 +80,10 @@ class SimpleRender : public IRender
   
   static constexpr size_t SHADOW_MAP_CASCADE_COUNT = 4;
   static constexpr size_t SHADOW_MAP_RESOLUTION = 2048;
+
+  static constexpr uint32_t RSM_KERNEL_SIZE = 64;
+  static constexpr uint32_t RSM_KERNEL_SIZE_BYTES = 4*sizeof(float)*SSAO_KERNEL_SIZE;
+  static constexpr float RSM_RADIUS = 32.f/static_cast<float>(SHADOW_MAP_RESOLUTION);
 
   static constexpr uint32_t VSM_BLUR_RADIUS = 3;
 
@@ -202,6 +208,7 @@ protected:
   
   VkSampler m_landscapeHeightmapSampler;
   VkSampler m_shadowmapSampler;
+  VkSampler m_vsmSampler;
   
   SceneGeometryPipeline m_deferredPipeline {};
   SceneGeometryPipeline m_deferredLandscapePipeline {};
@@ -292,6 +299,7 @@ protected:
   bool m_wireframe = false;
   bool m_landscapeShadows = false;
   bool m_ssao = true;
+  bool m_rsm = true;
   int m_tonemappingMode = 2;
   float m_exposure = 1.0;
   float m_sunAngle = 0.5f;
@@ -316,6 +324,7 @@ protected:
   vk_utils::VulkanImageMem m_ssaoNoise;
   VkSampler m_noiseSampler;
   VkBuffer m_ssaoKernel = VK_NULL_HANDLE;
+  VkBuffer m_rsmKernel = VK_NULL_HANDLE;
 
   VkRenderPass m_postFxRenderPass;
   std::vector<VkFramebuffer> m_framebuffers;
