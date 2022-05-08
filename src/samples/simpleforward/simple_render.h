@@ -84,7 +84,7 @@ class SimpleRender : public IRender
 
   static constexpr uint32_t RSM_KERNEL_SIZE = 256;
   static constexpr uint32_t RSM_KERNEL_SIZE_BYTES = sizeof(glm::vec4)*RSM_KERNEL_SIZE;
-  static constexpr float RSM_RADIUS = 2.f;
+  static constexpr float RSM_RADIUS = 5.f;
 
   static constexpr uint32_t VSM_BLUR_RADIUS = 3;
 

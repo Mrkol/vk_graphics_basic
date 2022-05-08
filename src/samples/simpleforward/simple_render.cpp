@@ -1121,8 +1121,8 @@ void SimpleRender::CreateUniformBuffer()
       float xi1 = randUNorm(rndEngine);
       float xi2 = randUNorm(rndEngine);
       rsmKernel[i] = glm::vec4(
-          RSM_RADIUS*xi1*std::sin(xi2*2*glm::pi<float>()),
-          RSM_RADIUS*xi1*std::cos(xi2*2*glm::pi<float>()),
+          RSM_RADIUS*xi1*glm::sin(xi2*2*glm::pi<float>()),
+          RSM_RADIUS*xi1*glm::cos(xi2*2*glm::pi<float>()),
           xi1*xi1*RSM_RADIUS*RSM_RADIUS,
           0);
     }
@@ -1939,7 +1939,7 @@ void SimpleRender::UpdateView()
     // Calculate split depths based on view camera frustum
     // Based on method presented in https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
     for (uint32_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; i++) {
-      const float p = (i + 1) / static_cast<float>(SHADOW_MAP_CASCADE_COUNT);
+      const float p = static_cast<float>(i + 1) / static_cast<float>(SHADOW_MAP_CASCADE_COUNT);
       const float log = minZ * std::pow(ratio, p);
       const float uniform = minZ + range * p;
       const float d = m_cascadeSplitLambda * (log - uniform) + uniform;
