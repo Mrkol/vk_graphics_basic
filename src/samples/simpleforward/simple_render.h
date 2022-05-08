@@ -54,8 +54,9 @@ class SimpleRender : public IRender
 
   static constexpr char const* LIGHTING_VERTEX_SHADER_PATH = "../resources/shaders/lighting/lighting.vert";
   static constexpr char const* LIGHTING_GEOMETRY_SHADER_PATH = "../resources/shaders/lighting/lighting.geom";
-  static constexpr char const* LIGHTING_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting.frag";
-  static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/lighting_global.frag";
+  static constexpr char const* LIGHTING_POINT_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/point.frag";
+  static constexpr char const* LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/global.frag";
+  static constexpr char const* LIGHTING_AMBIENT_FRAGMENT_SHADER_PATH = "../resources/shaders/lighting/ambient.frag";
   
   static constexpr char const* FOG_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/fog.frag";
   static constexpr char const* SSAO_FRAGMENT_SHADER_PATH = "../resources/shaders/postfx/ssao.frag";
@@ -83,7 +84,7 @@ class SimpleRender : public IRender
 
   static constexpr uint32_t RSM_KERNEL_SIZE = 256;
   static constexpr uint32_t RSM_KERNEL_SIZE_BYTES = sizeof(glm::vec4)*RSM_KERNEL_SIZE;
-  static constexpr float RSM_RADIUS = 0.2f;
+  static constexpr float RSM_RADIUS = 2.f;
 
   static constexpr uint32_t VSM_BLUR_RADIUS = 3;
 
@@ -215,6 +216,7 @@ protected:
   SceneGeometryPipeline m_deferredGrassPipeline {};
   pipeline_data_t m_lightingPipeline {};
   pipeline_data_t m_globalLightingPipeline {};
+  pipeline_data_t m_ambientLightingPipeline {};
   pipeline_data_t m_vsmPipeline {};
 
   pipeline_data_t m_cullingPipeline {};
@@ -297,13 +299,25 @@ protected:
   uint32_t m_framesInFlight  = 2u;
   bool m_vsync = false;
   bool m_wireframe = false;
-  bool m_landscapeShadows = false;
+  bool m_pointLights = true;
+  bool m_shadows = true;
   bool m_ssao = true;
   bool m_rsm = true;
   bool m_sss = true;
   int m_tonemappingMode = 2;
   float m_exposure = 1.0;
-  float m_sunAngle = 0.5f;
+  bool m_sun = true;
+  float m_sunPitch = 0.5f;
+  float m_sunYaw = 0.3f;
+
+  glm::vec3 SunDirection() const
+  {
+    return glm::vec3(
+        glm::sin(m_sunYaw) * glm::cos(m_sunPitch),
+        glm::sin(m_sunPitch),
+        glm::cos(m_sunYaw) * glm::cos(m_sunPitch));
+  }
+
   float m_cascadeSplitLambda = 0.95f;
 
   VkPhysicalDeviceFeatures m_enabledDeviceFeatures = {};
@@ -364,10 +378,12 @@ protected:
   
   vk_utils::VulkanImageMem m_shadowmap;
   vk_utils::VulkanImageMem m_rsmNormals;
+  vk_utils::VulkanImageMem m_rsmAlbedo;
   // variance shadow map (M1 and M2 of shadow)
   vk_utils::VulkanImageMem m_vsm;
   std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_cascadeViews;
   std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_rsmNormalViews;
+  std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_rsmAlbedoViews;
   std::array<VkImageView, SHADOW_MAP_CASCADE_COUNT> m_vsmViews;
   std::array<VkFramebuffer, SHADOW_MAP_CASCADE_COUNT> m_cascadeFramebuffers;
   std::array<VkFramebuffer, SHADOW_MAP_CASCADE_COUNT> m_vsmFramebuffers;

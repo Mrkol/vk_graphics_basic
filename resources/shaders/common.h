@@ -28,12 +28,10 @@ struct UniformParams
   float screenHeight;
   mat4  lightMatrix;
   vec3  lightPos;
-  BOOL enableLandscapeShadows;
   BOOL enableSsao;
   uint postFxDownscaleFactor;
   uint tonemappingMode;
   float exposure;
-  BOOL enableRsm;
   BOOL enableSss;
 };
 

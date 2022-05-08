@@ -1,25 +1,19 @@
 #ifndef VK_GRAPHICS_BASIC_SHADOWMAP_H
 #define VK_GRAPHICS_BASIC_SHADOWMAP_H
 
-layout (constant_id = 0) const uint SHADOW_MAP_CASCADE_COUNT = 4;
-layout (constant_id = 1) const uint RSM_KERNEL_SIZE = 64;
+layout (constant_id = 0) const uint SHADOW_MAP_CASCADE_COUNT = 4u;
 
 
-layout (set = 1, binding = 4) uniform sampler2DArray inShadowmaps;
+layout (set = 1, binding = 4) uniform sampler2DArray inVsm;
+layout (set = 1, binding = 5) uniform sampler2DArray inShadowmaps;
 
-layout (set = 1, binding = 5) uniform ShadowmapUBO
+layout (set = 1, binding = 6) uniform ShadowmapUBO
 {
 	mat4 cascadeViewProjMat[SHADOW_MAP_CASCADE_COUNT];
 	vec4 cascadeSplitDepths[SHADOW_MAP_CASCADE_COUNT/4];
 	vec4 cascadeMatrixNorms[SHADOW_MAP_CASCADE_COUNT/4];
 } shadowmapUbo;
 
-layout (set = 1, binding = 6) uniform sampler2DArray inRsmNormal;
-layout (set = 1, binding = 7) uniform RsmKernel
-{
-	// x, y, weight
-	vec4 samples[RSM_KERNEL_SIZE];
-} rsmKernel;
 
 
 const mat4 biasMat = mat4( 
@@ -44,7 +38,7 @@ float shade(vec3 wPos, uint cascadeIndex)
 
 	if (shadowCoord.z > 0.f && shadowCoord.z < 1.f && shadowCoord.w > 0)
     {
-	    const vec2 M1M2 = texture(inShadowmaps, vec3(shadowCoord.st, cascadeIndex)).rg;
+	    const vec2 M1M2 = texture(inVsm, vec3(shadowCoord.st, cascadeIndex)).rg;
         const float M1 = M1M2.x;
         const float M2 = M1M2.y;
 

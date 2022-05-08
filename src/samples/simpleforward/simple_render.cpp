@@ -336,7 +336,7 @@ void SimpleRender::SetupStaticMeshPipeline()
       shader_paths[VK_SHADER_STAGE_FRAGMENT_BIT] = std::string{WRITE_RSM_FRAGMENT_SHADER_PATH} + ".spv";
       shader_paths.erase(VK_SHADER_STAGE_GEOMETRY_BIT);
       maker.LoadShaders(m_device, shader_paths);
-      maker.colorBlending.attachmentCount = 1;
+      maker.colorBlending.attachmentCount = 2;
       result.shadow = maker.MakePipeline(m_device, vertexInputStateCreateInfo,
         m_shadowmapRenderPass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
       
@@ -480,7 +480,7 @@ void SimpleRender::SetupLandscapePipeline()
       maker.LoadShaders(m_device, shader_paths);
       pipelineInfo.stageCount = static_cast<uint32_t>(shader_paths.size());
       pipelineInfo.renderPass = m_shadowmapRenderPass;
-      maker.colorBlending.attachmentCount = 1;
+      maker.colorBlending.attachmentCount = 2;
 
       VK_CHECK_RESULT(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo,
         nullptr, &result.shadow))
@@ -528,9 +528,11 @@ void SimpleRender::SetupLightingPipeline()
     bindings.BindImage(3, m_gbuffer.depth_stencil_layer.image.view,
       nullptr, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT);
     bindings.BindImage(4, m_vsm.view, m_vsmSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    bindings.BindBuffer(5, m_shadowmapUbo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    bindings.BindImage(6, m_rsmNormals.view, m_vsmSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    bindings.BindBuffer(7, m_rsmKernel, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    bindings.BindImage(5, m_shadowmap.view, m_vsmSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindBuffer(6, m_shadowmapUbo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    bindings.BindImage(7, m_rsmNormals.view, m_vsmSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(8, m_rsmAlbedo.view, m_vsmSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindBuffer(9, m_rsmKernel, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     bindings.BindEnd(&m_lightingFragmentDescriptorSet, &m_lightingFragmentDescriptorSetLayout);
   }
   else
@@ -562,8 +564,18 @@ void SimpleRender::SetupLightingPipeline()
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
       VkDescriptorImageInfo {
+        .sampler = m_shadowmapSampler,
+        .imageView = m_shadowmap.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
         .sampler = m_vsmSampler,
         .imageView = m_rsmNormals.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_vsmSampler,
+        .imageView = m_rsmAlbedo.view,
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
     };
@@ -583,7 +595,10 @@ void SimpleRender::SetupLightingPipeline()
     }
     writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[5].dstBinding = 6;
+    writes[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[6].dstBinding = 7;
+    writes[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[7].dstBinding = 8;
 
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
   }
@@ -591,7 +606,7 @@ void SimpleRender::SetupLightingPipeline()
   vk_utils::GraphicsPipelineMaker maker;
 
   maker.LoadShaders(m_device, std::unordered_map<VkShaderStageFlagBits, std::string> {
-      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{LIGHTING_FRAGMENT_SHADER_PATH} + ".spv"},
+      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{LIGHTING_POINT_FRAGMENT_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_GEOMETRY_BIT, std::string{LIGHTING_GEOMETRY_SHADER_PATH} + ".spv"},
       {VK_SHADER_STAGE_VERTEX_BIT, std::string{LIGHTING_VERTEX_SHADER_PATH} + ".spv"}
     });
@@ -624,56 +639,65 @@ void SimpleRender::SetupLightingPipeline()
 
   m_lightingPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput,
     m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_PList(), 1);
-
   
-  maker.LoadShaders(m_device, std::unordered_map<VkShaderStageFlagBits, std::string> {
-      {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH} + ".spv"},
-      {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"}
-    });
-
-  
-  auto specData = std::tuple<uint32_t, uint32_t>(SHADOW_MAP_CASCADE_COUNT, RSM_KERNEL_SIZE);
-  std::array<VkSpecializationMapEntry, 2> specMap{{}};
-  VkSpecializationInfo specInfo;
-  makeSpecMap(specData, specMap, specInfo);
-
-  for (auto& info : maker.shaderStageInfos)
   {
-    if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+    maker.LoadShaders(m_device, std::unordered_map<VkShaderStageFlagBits, std::string> {
+        {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{LIGHTING_GLOBAL_FRAGMENT_SHADER_PATH} + ".spv"},
+        {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"}
+      });
+
+    
+    auto specData = std::tuple<uint32_t>(SHADOW_MAP_CASCADE_COUNT);
+    std::array<VkSpecializationMapEntry, 1> specMap{{}};
+    VkSpecializationInfo specInfo;
+    makeSpecMap(specData, specMap, specInfo);
+
+    for (auto& info : maker.shaderStageInfos)
     {
-      info.pSpecializationInfo = &specInfo;
-      break;
+      if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+      {
+        info.pSpecializationInfo = &specInfo;
+        break;
+      }
     }
+
+    m_globalLightingPipeline.layout = maker.MakeLayout(m_device,
+      {m_lightingDescriptorSetLayout, m_lightingFragmentDescriptorSetLayout}, sizeof(graphicsPushConsts));
+    
+    m_globalLightingPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput,
+      m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_TList(), 1);
   }
 
-  m_globalLightingPipeline.layout = maker.MakeLayout(m_device,
-    {m_lightingDescriptorSetLayout, m_lightingFragmentDescriptorSetLayout}, sizeof(graphicsPushConsts));
-  
-  m_globalLightingPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput,
-    m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_TList(), 1);
-
-  
-  maker.SetDefaultState(SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION);
-  
-  maker.LoadShaders(m_device,
-      {{VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"},
-        {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{VSM_FRAGMENT_SHADER_PATH} + ".spv"}});
-
-
-  auto specData2 = std::tuple<uint32_t>(VSM_BLUR_RADIUS);
-  std::array<VkSpecializationMapEntry, 1> specMap2{{}};
-  VkSpecializationInfo specInfo2;
-  makeSpecMap(specData2, specMap2, specInfo2);
-  
-  for (auto& info : maker.shaderStageInfos)
   {
-    if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+    maker.LoadShaders(m_device, std::unordered_map<VkShaderStageFlagBits, std::string> {
+        {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{LIGHTING_AMBIENT_FRAGMENT_SHADER_PATH} + ".spv"},
+        {VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"}
+      });
+
+    
+    auto specData = std::tuple<uint32_t, uint32_t, float>(
+        SHADOW_MAP_CASCADE_COUNT, RSM_KERNEL_SIZE, RSM_RADIUS);
+    std::array<VkSpecializationMapEntry, 3> specMap{{}};
+    VkSpecializationInfo specInfo;
+    makeSpecMap(specData, specMap, specInfo);
+
+    for (auto& info : maker.shaderStageInfos)
     {
-      info.pSpecializationInfo = &specInfo;
-      break;
+      if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+      {
+        info.pSpecializationInfo = &specInfo;
+        break;
+      }
     }
+
+    m_ambientLightingPipeline.layout = maker.MakeLayout(m_device,
+      {m_lightingDescriptorSetLayout, m_lightingFragmentDescriptorSetLayout}, sizeof(graphicsPushConsts));
+    
+    m_ambientLightingPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput,
+      m_gbuffer.renderpass, {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR}, vk_utils::IA_TList(), 1);
   }
   
+
   for (size_t i = 0; i < SHADOW_MAP_CASCADE_COUNT; ++i)
   {
     bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -681,9 +705,32 @@ void SimpleRender::SetupLightingPipeline()
     bindings.BindEnd(&m_vsmDescriptorSets[i], &m_vsmDescriptorSetLayout);
   }
 
-  m_vsmPipeline.layout = maker.MakeLayout(m_device, {m_vsmDescriptorSetLayout}, sizeof(uint32_t));
-  m_vsmPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput, m_vsmRenderPass,
-      {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+  {
+    maker.SetDefaultState(SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION);
+    
+    maker.LoadShaders(m_device,
+        {{VK_SHADER_STAGE_VERTEX_BIT, std::string{FULLSCREEN_QUAD3_VERTEX_SHADER_PATH} + ".spv"},
+          {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{VSM_FRAGMENT_SHADER_PATH} + ".spv"}});
+
+
+    auto specData = std::tuple<uint32_t>(VSM_BLUR_RADIUS);
+    std::array<VkSpecializationMapEntry, 1> specMap{{}};
+    VkSpecializationInfo specInfo;
+    makeSpecMap(specData, specMap, specInfo);
+    
+    for (auto& info : maker.shaderStageInfos)
+    {
+      if (info.stage == VK_SHADER_STAGE_FRAGMENT_BIT)
+      {
+        info.pSpecializationInfo = &specInfo;
+        break;
+      }
+    }
+
+    m_vsmPipeline.layout = maker.MakeLayout(m_device, {m_vsmDescriptorSetLayout}, sizeof(uint32_t));
+    m_vsmPipeline.pipeline = maker.MakePipeline(m_device, emptyVertexInput, m_vsmRenderPass,
+        {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
+  }
 }
 
 void SimpleRender::SetupPostfxPipeline()
@@ -1076,7 +1123,7 @@ void SimpleRender::CreateUniformBuffer()
       rsmKernel[i] = glm::vec4(
           RSM_RADIUS*xi1*std::sin(xi2*2*glm::pi<float>()),
           RSM_RADIUS*xi1*std::cos(xi2*2*glm::pi<float>()),
-          xi2*xi2,
+          xi1*xi1*RSM_RADIUS*RSM_RADIUS,
           0);
     }
 
@@ -1090,12 +1137,10 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.time = a_time;
   m_uniforms.screenWidth = static_cast<float>(m_width);
   m_uniforms.screenHeight = static_cast<float>(m_height);
-  m_uniforms.lightPos = glm::vec3(0, std::sin(m_sunAngle), std::cos(m_sunAngle))*10000.f;
-  m_uniforms.enableLandscapeShadows = m_landscapeShadows;
+  m_uniforms.lightPos = SunDirection()*10000.f;
   m_uniforms.enableSsao = m_ssao;
   m_uniforms.tonemappingMode = static_cast<uint32_t>(m_tonemappingMode);
   m_uniforms.exposure = m_exposure;
-  m_uniforms.enableRsm = m_rsm;
   m_uniforms.enableSss = m_sss;
   std::memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
   std::memcpy(m_shadowmapUboMappedMem, &m_shadowmapUboData, sizeof(m_shadowmapUboData));
@@ -1344,26 +1389,44 @@ void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff, VisibilityInf
 void SimpleRender::RecordLightResolve(VkCommandBuffer a_cmdBuff)
 {
   cmdBeginRegion(a_cmdBuff, "Light resolve");
-
-  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.pipeline);
-        
+  
   std::array dsets {m_lightingDescriptorSet, m_lightingFragmentDescriptorSet};
-  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.layout, 0,
-    static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
 
-  VkShaderStageFlags stageFlags =
-    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_GEOMETRY_BIT;
-  vkCmdPushConstants(a_cmdBuff, m_lightingPipeline.layout, stageFlags, 0,
-    sizeof(graphicsPushConsts), &graphicsPushConsts);
-        
-  vkCmdDraw(a_cmdBuff, 1, m_pScnMgr->LightsNum(), 0, 0);
+  // Point lights
+  if (m_pointLights)
+  {
+    vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.pipeline);
+          
+    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lightingPipeline.layout, 0,
+      static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
 
-        
-  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.pipeline);
-  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.layout, 0,
-    static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
+    VkShaderStageFlags stageFlags =
+      VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_GEOMETRY_BIT;
+    vkCmdPushConstants(a_cmdBuff, m_lightingPipeline.layout, stageFlags, 0,
+      sizeof(graphicsPushConsts), &graphicsPushConsts);
+          
+    vkCmdDraw(a_cmdBuff, 1, m_pScnMgr->LightsNum(), 0, 0);
+  }
 
-  vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+  // Global (sun)
+  if (m_sun)
+  {
+    vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.pipeline);
+    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_globalLightingPipeline.layout, 0,
+      static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
+
+    vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+  }
+
+  // Ambient (RSM)
+  if (m_rsm)
+  {
+    vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_ambientLightingPipeline.pipeline);
+    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_ambientLightingPipeline.layout, 0,
+      static_cast<uint32_t>(dsets.size()), dsets.data(), 0, VK_NULL_HANDLE);
+
+    vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
+  }
 
   cmdEndRegion(a_cmdBuff);
 }
@@ -1393,6 +1456,9 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
       VkClearValue{
         .color = {{0.f, 0.f, 0.f, 0.f}}
       },
+      VkClearValue{
+        .color = {{0.f, 0.f, 0.f, 0.f}}
+      },
     };
     VkRenderPassBeginInfo shadowPassInfo {
       .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -1406,6 +1472,7 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
       .pClearValues = clears.data(),
     };
     vkCmdBeginRenderPass(a_cmdBuff, &shadowPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    if (m_shadows) // TODO: this is a bit of a kostyl...
     {
       vkCmdPushConstants(a_cmdBuff, m_deferredLandscapePipeline.layout,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
@@ -1427,7 +1494,7 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
 
     
     VkClearValue colorClear {
-      .color = {{0.f, 0.f, 0.f, 0.f}},
+      .color = {{1.f, 1.f, 0.f, 0.f}},
     };
     VkRenderPassBeginInfo shadowPassInfo2 {
       .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -1441,6 +1508,7 @@ void SimpleRender::RecordShadowmapRendering(VkCommandBuffer a_cmdBuff)
       .pClearValues = &colorClear,
     };
     vkCmdBeginRenderPass(a_cmdBuff, &shadowPassInfo2, VK_SUBPASS_CONTENTS_INLINE);
+    if (m_shadows)
     {
       vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vsmPipeline.pipeline);
       vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vsmPipeline.layout,
@@ -1466,6 +1534,7 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
   VK_CHECK_RESULT(vkBeginCommandBuffer(a_cmdBuff, &beginInfo))
 
   RecordShadowmapRendering(a_cmdBuff);
+
 
   RecordStaticMeshCulling(a_cmdBuff, m_mainVisInfo);
   RecordLandscapeCulling(a_cmdBuff, m_mainVisInfo);
@@ -1635,6 +1704,7 @@ void SimpleRender::RecreateSwapChain()
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
+  ClearPipeline(m_ambientLightingPipeline);
   ClearPipeline(m_vsmPipeline);
   ClearPipeline(m_fogPipeline);
   ClearPipeline(m_ssaoPipeline);
@@ -1855,7 +1925,7 @@ void SimpleRender::UpdateView()
   m_mainVisInfo.landscapeCullingPushConsts.projView = mWorldViewProj;
 
   {
-    const auto lightDir = glm::normalize(-glm::vec3(0, std::sin(m_sunAngle), std::cos(m_sunAngle)));
+    const auto lightDir = glm::normalize(-SunDirection());
     const float clipRange = farClip - nearClip;
 
     const float minZ = nearClip;
@@ -2024,6 +2094,7 @@ void SimpleRender::ClearAllPipelines()
   ClearPipeline(m_deferredGrassPipeline);
   ClearPipeline(m_lightingPipeline);
   ClearPipeline(m_globalLightingPipeline);
+  ClearPipeline(m_ambientLightingPipeline);
   ClearPipeline(m_vsmPipeline);
   ClearPipeline(m_postFxPipeline);
   ClearPipeline(m_fogPipeline);
@@ -2108,7 +2179,8 @@ void SimpleRender::SetupGUIElements()
     ImGui::Begin("Simple render settings");
 
     ImGui::Checkbox("Wireframe", &m_wireframe);
-    ImGui::Checkbox("Landscape Shadows", &m_landscapeShadows);
+    ImGui::Checkbox("Point lights", &m_pointLights);
+    ImGui::Checkbox("Cascade shadows", &m_shadows);
     ImGui::Checkbox("Screenspace ambient occlusion", &m_ssao);
     ImGui::Checkbox("Reflective shadow maps", &m_rsm);
     ImGui::Checkbox("Subsurface scattering", &m_sss);
@@ -2116,7 +2188,9 @@ void SimpleRender::SetupGUIElements()
     static const std::array tmNames{"None", "Reinhard", "Hable Filmic", "Exposure", "Approximate ACES"};
     ImGui::Combo("Tone mapping", &m_tonemappingMode, tmNames.data(), static_cast<int>(tmNames.size()));
     ImGui::SliderFloat("Exposure", &m_exposure, 0.0, 10.0);
-    ImGui::SliderAngle("Sun", &m_sunAngle);
+    ImGui::Checkbox("Sun lighting", &m_sun);
+    ImGui::SliderAngle("Sun pitch", &m_sunPitch);
+    ImGui::SliderAngle("Sun yaw", &m_sunYaw);
 
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
     ImGui::Text("Camera pos: %.3f %.3f %.3f", m_cam.pos.x, m_cam.pos.y, m_cam.pos.z);
@@ -2347,10 +2421,12 @@ void SimpleRender::ClearShadowmaps()
   
   destroyViews(m_cascadeViews);
   destroyViews(m_rsmNormalViews);
+  destroyViews(m_rsmAlbedoViews);
   destroyViews(m_vsmViews);
   
   vk_utils::deleteImg(m_device, &m_shadowmap);
   vk_utils::deleteImg(m_device, &m_rsmNormals);
+  vk_utils::deleteImg(m_device, &m_rsmAlbedo);
   vk_utils::deleteImg(m_device, &m_vsm);
 }
 
@@ -2806,11 +2882,13 @@ void SimpleRender::CreateShadowmaps()
 {
   auto format = m_gbuffer.depth_stencil_layer.image.format;
   auto rsmNormalsFormat = VK_FORMAT_R8G8B8A8_SNORM;
+  auto rsmAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
   auto vsmFormat = VK_FORMAT_R32G32_SFLOAT;
 
   {
     CreateStackedTexture(m_shadowmap, m_cascadeViews, format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
     CreateStackedTexture(m_rsmNormals, m_rsmNormalViews, rsmNormalsFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    CreateStackedTexture(m_rsmAlbedo, m_rsmAlbedoViews, rsmAlbedoFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     CreateStackedTexture(m_vsm, m_vsmViews, vsmFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
   }
 
@@ -2836,11 +2914,22 @@ void SimpleRender::CreateShadowmaps()
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
+      VkAttachmentDescription{
+        .format = rsmAlbedoFormat,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
     };
 
     VkAttachmentReference depthAttachmentRef{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     std::array colorAttachments{
       VkAttachmentReference{1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+      VkAttachmentReference{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
     };
     
     std::array subpasses {
@@ -2935,7 +3024,7 @@ void SimpleRender::CreateShadowmaps()
 
   for (size_t i = 0; i < m_cascadeViews.size(); ++i)
   {
-    std::array attachments{m_cascadeViews[i], m_rsmNormalViews[i]};
+    std::array attachments{m_cascadeViews[i], m_rsmNormalViews[i], m_rsmAlbedoViews[i]};
 
     VkFramebufferCreateInfo fbufInfo{
       .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,

@@ -88,55 +88,6 @@ vec3 diffuse_transmittance(
     return T(s) * SUN_COLOR * albedo * E * ONE_OVER_PI;
 }
 
-vec3 ambient_reflectance(vec3 albedo, vec3 cPos, vec3 cNormal, uint cascadeIndex)
-{
-    if (!Params.enableRsm)
-    {
-        return vec3(0.05f);
-    }
-
-    // RSM
-	const vec4 shadowCoord = (biasMat * shadowmapUbo.cascadeViewProjMat[cascadeIndex]) * invView * vec4(cPos, 1.f);	
-
-    const mat4 fromShadowNDC = inverse(biasMat * shadowmapUbo.cascadeViewProjMat[cascadeIndex]);
-    const mat3 fromShadowSJacobi = mat3(transpose(shadowmapUbo.cascadeViewProjMat[cascadeIndex]));
-
-    const float CS = cascadeSize(cascadeIndex);
-
-	vec3 ambient = vec3(0);
-
-	for (uint i = 0; i < RSM_KERNEL_SIZE; ++i)
-	{
-		const float weight = rsmKernel.samples[i].z * CS*CS;
-
-		const vec3 ndcPoint = shadowCoord.xyz + vec3(rsmKernel.samples[i].xy*CS, 0);
-        const vec3 wPoint = (fromShadowNDC * vec4(ndcPoint, 1.0)).xyz;
-        const vec3 cPoint = (params.mView * vec4(wPoint, 1.0)).xyz;
-        vec4 rsmValue = texture(inRsmNormal, vec3(ndcPoint.st, cascadeIndex));
-	    vec3 cPointNormal = mat3(params.mView) * fromShadowSJacobi * rsmValue.xyz;
-
-        const uint shadingModel = uint(rsmValue.z);
-
-        float skip = cPointNormal == vec3(0, 0, 0) ? 0.f : 1.f;
-        cPointNormal = normalize(cPointNormal);
-
-        const vec3 toLight = cPoint - cPos;
-
-        const float NpofL = dot(cPointNormal, -toLight);
-        const float NotL = dot(cNormal, toLight);
-        const float dist2 = dot(toLight, toLight);
-        // hack: albedo is constant right now
-        // TODO: no its not, we need to redo this :(
-        const vec3 phi = Params.baseColor;
-		ambient += weight*phi*skip*max(0, NpofL)*max(0, NotL)/sq(dist2);
-	}
-
-    // Article authors talk of some "global normalization".
-    // I assume they used the PODGONYAN operator as well.
-    return albedo * ambient / (CS*CS*20000.f);
-}
-
-
 float SmithJoint_G(float alphaSq, float NoL, float NoV)
 {
 	float k = alphaSq / 2;
@@ -220,14 +171,12 @@ void main()
         return;
     }
 
-
     const uint cascadeIdx = cascadeForDepth(position.z);
 
     const float roughness = shadingModel == 2 ? 0.8f : 0.f;
 
     vec3 color =
           diffuse_specular_reflectance(albedo, position, normal, 0, roughness, cascadeIdx, shadingModel)
-        + ambient_reflectance(albedo, position, normal, cascadeIdx)
         + diffuse_transmittance(albedo, position, normal, cascadeIdx, shadingModel);
 
     out_fragColor = vec4(color, shade((invView * vec4(position, 1.f)).xyz, cascadeIdx));
