@@ -29,41 +29,73 @@ layout (location = 0) in FS_IN { vec2 texCoord; } vIn;
 
 
 float sq(float x) { return x*x; }
+const float PI = 3.14159265358979323846;
+const float ONE_OVER_PI = 1.0 / PI;
+const vec3 DIELECTRIC_SPECULAR = vec3(0.04);
+const vec3 BLACK = vec3(0);
+const vec3 SUN_COLOR = vec3(4, 3.5, 3);
 
 
 mat4 invView = inverse(params.mView);
+mat4 invProj = inverse(params.mProj);
+vec3 cLightPosition = (params.mView * vec4(Params.lightPos, 1)).xyz;
 
 
-
-vec3 irradiance(vec3 cPosition, vec3 cNormal, uint shadingModel, uint cascadeIndex)
+float depth(vec3 cPos, vec3 cNormal, uint cascadeIndex)
 {
-    const vec3 cLightPosition = (params.mView * vec4(Params.lightPos, 1)).xyz;
-    const vec3 lightColor = vec3(1, 0.9, 0.9);
+    const vec4 cShrinkedpos = vec4(cPos - 0.005f * cNormal, 1.0f);
 
-    const vec3 toLightVec = cLightPosition - cPosition;
-    const vec3 cLightDir = normalize(toLightVec);
-    
-    vec3 diffuse = lightColor;
-    switch (shadingModel)
-    {
-        case 0:
-            diffuse *= max(dot(cNormal, cLightDir), 0.0f);
-            break;
-        case 1:
-            diffuse *= abs(dot(cNormal, cLightDir));
-            break;
-        case 2:
-            diffuse *= 0.5f*dot(cNormal, cLightDir) + 0.5f;
-            break;
-    }
-    
-    const float shadow = shade((invView * vec4(cPosition, 1.f)).xyz, cascadeIndex);
+    const vec4 sampleCoord = (biasMat * shadowmapUbo.cascadeViewProjMat[cascadeIndex])
+        * invView * cShrinkedpos;
+	const vec3 sShadow = vec3(2*sampleCoord.st - 1,
+        texture(inShadowmaps, vec3(sampleCoord.st, cascadeIndex)).r);
 
-    return shadow*diffuse;
+    const vec3 cShadow = (params.mView
+        * inverse(shadowmapUbo.cascadeViewProjMat[cascadeIndex])
+        * vec4(sShadow, 1.0)).xyz;
+
+    return abs(cShrinkedpos.z - cShadow.z);
 }
 
-vec3 rsm(vec3 cPos, vec3 cNormal, uint cascadeIndex)
+vec3 T(float s) {
+    return
+       vec3(0.233, 0.455, 0.649) * exp(-s*s/0.0064) +
+       vec3(0.1, 0.336, 0.344) * exp(-s*s/0.0484) +
+       vec3(0.118, 0.198, 0.0) * exp(-s*s/0.187) +
+       vec3(0.113, 0.007, 0.007) * exp(-s*s/0.567) +
+       vec3(0.358, 0.004, 0.0) * exp(-s*s/1.99) +
+       vec3(0.078, 0.0, 0.0) * exp(-s*s/7.41);
+}
+
+vec3 diffuse_transmittance(
+    vec3 albedo,
+    vec3 cPosition,
+    vec3 cNormal,
+    uint cascadeIndex,
+    uint shadingModel)
 {
+    if (shadingModel != 1 || !Params.enableSss)
+    {
+        // no transmittance
+        return vec3(0);
+    }
+
+    // http://www.iryoku.com/translucency/downloads/Real-Time-Realistic-Skin-Translucency.pdf
+    const vec3 cLightDir = normalize(cLightPosition - cPosition);
+
+    float s = depth(cPosition, cNormal, cascadeIndex);
+    float E = max(0.3 + dot(-cNormal, cLightDir), 0.0);
+    return T(s) * SUN_COLOR * albedo * E * ONE_OVER_PI;
+}
+
+vec3 ambient_reflectance(vec3 albedo, vec3 cPos, vec3 cNormal, uint cascadeIndex)
+{
+    if (!Params.enableRsm)
+    {
+        return vec3(0.05f);
+    }
+
+    // RSM
 	const vec4 shadowCoord = (biasMat * shadowmapUbo.cascadeViewProjMat[cascadeIndex]) * invView * vec4(cPos, 1.f);	
 
     const mat4 fromShadowNDC = inverse(biasMat * shadowmapUbo.cascadeViewProjMat[cascadeIndex]);
@@ -90,17 +122,77 @@ vec3 rsm(vec3 cPos, vec3 cNormal, uint cascadeIndex)
 
         const vec3 toLight = cPoint - cPos;
 
-        const float NpotL = dot(cPointNormal, toLight);
-        const float NofL = dot(cNormal, toLight);
-        const float dist2 = dot(toLight, -toLight);
+        const float NpofL = dot(cPointNormal, -toLight);
+        const float NotL = dot(cNormal, toLight);
+        const float dist2 = dot(toLight, toLight);
         // hack: albedo is constant right now
+        // TODO: no its not, we need to redo this :(
         const vec3 phi = Params.baseColor;
-		ambient += weight*phi*skip*max(0, NpotL)*max(0, NofL)/sq(dist2);
+		ambient += weight*phi*skip*max(0, NpofL)*max(0, NotL)/sq(dist2);
 	}
 
     // Article authors talk of some "global normalization".
     // I assume they used the PODGONYAN operator as well.
-    return clamp(ambient / (CS*CS*7000.f), 0, 1);
+    return albedo * ambient / (CS*CS*20000.f);
+}
+
+
+float SmithJoint_G(float alphaSq, float NoL, float NoV)
+{
+	float k = alphaSq / 2;
+	float g_v = NoV / (NoV*(1 - k) + k);
+	float g_l = NoL / (NoL*(1 - k) + k);
+	return g_v * g_l;
+}
+
+float GGX_D(float alphaSq, float NoH)
+{
+    float c = (sq(NoH) * (alphaSq - 1.) + 1.);
+    return alphaSq / sq(c) * ONE_OVER_PI;
+}
+
+vec3 diffuse_specular_reflectance(
+    vec3 albedo,
+    vec3 cPosition,
+    vec3 cNormal,
+    float metallic,
+    float roughness,
+    uint cascadeIndex,
+    uint shadingModel)
+{
+    vec3 L = normalize(cLightPosition - cPosition);
+    vec3 V = vec3(0, 0, 1);
+    vec3 N = cNormal;
+
+    
+    vec3 H = normalize(L+V);
+
+    float NoH = max(0.001, dot(N, H));
+    float VoH = max(0.001, dot(V, H));
+    float NoL = shadingModel == 2 ? abs(dot(N, L)) : max(0.001, dot(N, L));
+    float NoV = max(0.001, dot(N, V));
+
+    vec3 F0 = mix(DIELECTRIC_SPECULAR, albedo, metallic);
+    vec3 cDiff = mix(albedo * (1. - DIELECTRIC_SPECULAR),
+                     BLACK,
+                     metallic);
+
+    float alphaSq = sq(sq(roughness));
+
+    // Schlick's approximation
+    vec3 F = mix(F0, vec3(1), pow((1.01 - VoH), 5.));
+
+    vec3 diffuse = (vec3(1.) - F) * cDiff * ONE_OVER_PI;
+
+    float G = SmithJoint_G(alphaSq, NoL, NoV);
+
+    float D = GGX_D(alphaSq, NoH);
+
+    vec3 specular = (F * G * D) / (4. * NoL * NoV);
+
+    return SUN_COLOR
+        * (diffuse + specular)
+        * NoL;
 }
 
 void main()
@@ -111,24 +203,32 @@ void main()
         2.0 * gl_FragCoord.xy / vec2(Params.screenWidth, Params.screenHeight) - 1.0,
         subpassLoad(inDepth).r,
         1.0);
-    const vec4 camSpacePos = inverse(params.mProj) * screenSpacePos;
+    const vec4 camSpacePos = invProj * screenSpacePos;
 
     const vec3 position = camSpacePos.xyz / camSpacePos.w;
     const vec3 normal = subpassLoad(inNormal).xyz;
     const vec3 tangent = subpassLoad(inTangent).xyz;
     const vec3 albedo = subpassLoad(inAlbedo).rgb;
+    
+    if (screenSpacePos.z == 1)
+    {
+        const vec2 d = cLightPosition.xy/cLightPosition.z - position.xy/position.z;
+        const float scale = 0.001f;
+        float a = 1 - min(dot(d, d), scale)/scale;
+        a *= (cLightPosition.z < 0 ? 1 : 0);
+        out_fragColor = mix(vec4(0.2, 0.5, 0.98, 1), vec4(SUN_COLOR, 1), a);
+        return;
+    }
 
 
     const uint cascadeIdx = cascadeForDepth(position.z);
-    const vec3 direct = irradiance(position, normal, shadingModel, cascadeIdx);
-    
 
-    vec3 ambient = vec3(0.05f);
+    const float roughness = shadingModel == 2 ? 0.8f : 0.f;
 
-    if (Params.enableRsm)
-    {
-        ambient = rsm(position, normal, cascadeIdx);
-    }
+    vec3 color =
+          diffuse_specular_reflectance(albedo, position, normal, 0, roughness, cascadeIdx, shadingModel)
+        + ambient_reflectance(albedo, position, normal, cascadeIdx)
+        + diffuse_transmittance(albedo, position, normal, cascadeIdx, shadingModel);
 
-    out_fragColor = vec4((ambient + direct) * albedo, 0.5f);
+    out_fragColor = vec4(color, shade((invView * vec4(position, 1.f)).xyz, cascadeIdx));
 }

@@ -34,6 +34,7 @@ struct UniformParams
   uint tonemappingMode;
   float exposure;
   BOOL enableRsm;
+  BOOL enableSss;
 };
 
 #undef PAD

@@ -25,7 +25,11 @@ layout (location = 2) out vec4 outAlbedo;
 
 void main()
 {
-    outNormal = vec4(surf.sNorm, float(shadingModel));
-    outTangent = vec4(surf.sTangent, 0.0);
-    outAlbedo = vec4(Params.baseColor, 1.0);
+    vec3 color = Params.baseColor;
+    if (shadingModel == 2) color = vec3(0.5, 0.8, 0.1);
+    if (shadingModel == 0) color = vec3(0.6, 0.4, 0.2);
+
+    outNormal = vec4(normalize(surf.sNorm), float(shadingModel));
+    outTangent = vec4(normalize(surf.sTangent), 0.0);
+    outAlbedo = vec4(color, 1.0);
 }

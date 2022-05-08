@@ -46,7 +46,7 @@ void main(void)
     vOut.sNorm    = mat3(normalModelView) * wNorm.xyz;
     vOut.sTangent = mat3(normalModelView) * wTang.xyz;
     vOut.texCoord = vTexCoordAndTang.xy;
-    shadingModel = 0;
+    shadingModel = 1;
 
     gl_Position   = params.mProj * modelView * vec4(vPosNorm.xyz, 1.0f);
 }

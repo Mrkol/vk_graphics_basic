@@ -1096,6 +1096,7 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.tonemappingMode = static_cast<uint32_t>(m_tonemappingMode);
   m_uniforms.exposure = m_exposure;
   m_uniforms.enableRsm = m_rsm;
+  m_uniforms.enableSss = m_sss;
   std::memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
   std::memcpy(m_shadowmapUboMappedMem, &m_shadowmapUboData, sizeof(m_shadowmapUboData));
 }
@@ -2110,6 +2111,7 @@ void SimpleRender::SetupGUIElements()
     ImGui::Checkbox("Landscape Shadows", &m_landscapeShadows);
     ImGui::Checkbox("Screenspace ambient occlusion", &m_ssao);
     ImGui::Checkbox("Reflective shadow maps", &m_rsm);
+    ImGui::Checkbox("Subsurface scattering", &m_sss);
 
     static const std::array tmNames{"None", "Reinhard", "Hable Filmic", "Exposure", "Approximate ACES"};
     ImGui::Combo("Tone mapping", &m_tonemappingMode, tmNames.data(), static_cast<int>(tmNames.size()));
@@ -2803,7 +2805,7 @@ void SimpleRender::CreateStackedTexture(vk_utils::VulkanImageMem& mem,
 void SimpleRender::CreateShadowmaps()
 {
   auto format = m_gbuffer.depth_stencil_layer.image.format;
-  auto rsmNormalsFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  auto rsmNormalsFormat = VK_FORMAT_R8G8B8A8_SNORM;
   auto vsmFormat = VK_FORMAT_R32G32_SFLOAT;
 
   {

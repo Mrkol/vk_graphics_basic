@@ -83,7 +83,7 @@ class SimpleRender : public IRender
 
   static constexpr uint32_t RSM_KERNEL_SIZE = 256;
   static constexpr uint32_t RSM_KERNEL_SIZE_BYTES = sizeof(glm::vec4)*RSM_KERNEL_SIZE;
-  static constexpr float RSM_RADIUS = 0.1f;
+  static constexpr float RSM_RADIUS = 0.2f;
 
   static constexpr uint32_t VSM_BLUR_RADIUS = 3;
 
@@ -300,6 +300,7 @@ protected:
   bool m_landscapeShadows = false;
   bool m_ssao = true;
   bool m_rsm = true;
+  bool m_sss = true;
   int m_tonemappingMode = 2;
   float m_exposure = 1.0;
   float m_sunAngle = 0.5f;
