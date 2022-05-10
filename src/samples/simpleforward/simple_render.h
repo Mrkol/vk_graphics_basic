@@ -71,6 +71,11 @@ class SimpleRender : public IRender
 
   static constexpr char const* CULLING_SHADER_PATH = "../resources/shaders/culling.comp";
   static constexpr char const* LANDSCAPE_CULLING_SHADER_PATH = "../resources/shaders/landscape_culling.comp";
+  
+  static constexpr char const* PARTICLE_VERT_SHADER_PATH = "../resources/shaders/forward/particle.vert";
+  static constexpr char const* PARTICLE_FRAG_SHADER_PATH = "../resources/shaders/forward/particle.frag";
+  static constexpr char const* PARTICLE_COMP_SHADER_PATH = "../resources/shaders/forward/particle.comp";
+
 
   static constexpr uint32_t POSTFX_DOWNSCALE_FACTOR = 4;
 
@@ -87,6 +92,9 @@ class SimpleRender : public IRender
   static constexpr float RSM_RADIUS = 5.f;
 
   static constexpr uint32_t VSM_BLUR_RADIUS = 3;
+  
+  static constexpr size_t MAX_PARTICLES = 128;
+  static constexpr size_t PARTICLE_DATA_SIZE = sizeof(float)*8;
 
 public:
   SimpleRender(uint32_t a_width, uint32_t a_height);
@@ -149,11 +157,11 @@ public:
   }
 
   static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
-    VkDebugReportFlagsEXT                       flags,
-    VkDebugReportObjectTypeEXT                  objectType,
-    uint64_t                                    object,
-    size_t                                      location,
-    int32_t                                     messageCode,
+    VkDebugReportFlagsEXT      flags,
+    VkDebugReportObjectTypeEXT objectType,
+    uint64_t                   object,
+    size_t                     location,
+    int32_t                    messageCode,
     const char* pLayerPrefix,
     const char* pMessage,
     void* pUserData)
@@ -164,6 +172,10 @@ public:
     (void)location;
     (void)messageCode;
     (void)pUserData;
+    if (std::strstr(pMessage, "Validation Error") != nullptr)
+    {
+      std::cout << "\nVALIDATION ERROR\n" << std::endl;
+    }
     std::cout << pLayerPrefix << ": " << pMessage << std::endl;
     return VK_FALSE;
   }
@@ -204,6 +216,7 @@ protected:
   VkDeviceMemory m_uboAlloc = VK_NULL_HANDLE;
   void* m_uboMappedMem = nullptr;
   void* m_shadowmapUboMappedMem = nullptr;
+  void* m_particlesUboMappedMem = nullptr;
 
   VkDeviceMemory m_indirectRenderingMemory = VK_NULL_HANDLE;
   
@@ -360,7 +373,7 @@ protected:
   VkDescriptorSetLayout m_ssaoDescriptorSetLayout = VK_NULL_HANDLE;
 
 
-
+  // Shadowmaps
   struct ShadowmapUbo
   {
     std::array<glm::mat4, SHADOW_MAP_CASCADE_COUNT> cascadeViewProjMats;
@@ -375,7 +388,8 @@ protected:
   VkDescriptorSetLayout m_vsmDescriptorSetLayout = VK_NULL_HANDLE;
 
   ShadowmapUbo m_shadowmapUboData;
-  
+
+    
   vk_utils::VulkanImageMem m_shadowmap;
   vk_utils::VulkanImageMem m_rsmNormals;
   vk_utils::VulkanImageMem m_rsmAlbedo;
@@ -390,6 +404,30 @@ protected:
   VkRenderPass m_shadowmapRenderPass;
   VkRenderPass m_vsmRenderPass;
 
+
+  // Particles and transparency
+
+  struct ParticlesUbo
+  {
+    float deltaTime;
+    uint32_t particleCount;
+  };
+
+  ParticlesUbo m_particlesUboData {};
+  VkBuffer m_particles = VK_NULL_HANDLE;
+  VkBuffer m_particlesUbo = VK_NULL_HANDLE;
+  vk_utils::VulkanImageMem m_transparent;
+  VkRenderPass m_transparentRenderPass = VK_NULL_HANDLE;
+  VkFramebuffer m_transparentFramebuffer = VK_NULL_HANDLE;
+  
+  VkDescriptorSet m_particlesComputeDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_particlesComputeDescriptorSetLayout = VK_NULL_HANDLE;
+  
+  VkDescriptorSet m_particlesDescriptorSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout m_particlesDescriptorSetLayout = VK_NULL_HANDLE;
+  
+  pipeline_data_t m_particlesComputePipeline;
+  pipeline_data_t m_particlesPipeline;
 
   VkPipeline pickGeometryPipeline(const SceneGeometryPipeline& pipeline, bool depthOnly) const
   {
@@ -417,13 +455,15 @@ protected:
   void RecordStaticMeshRendering(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo, bool depthOnly);
   void RecordLandscapeRendering(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo, bool depthOnly);
   void RecordGrassRendering(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo, bool depthOnly);
+  void RecordTransparentPass(VkCommandBuffer a_cmdBuff);
   void RecordLightResolve(VkCommandBuffer a_cmdBuff);
 
-  virtual void SetupStaticMeshPipeline();
-  virtual void SetupLandscapePipeline();
-  virtual void SetupLightingPipeline();
-  virtual void SetupPostfxPipeline();
-  virtual void SetupCullingPipeline();
+  void SetupStaticMeshPipeline();
+  void SetupLandscapePipeline();
+  void SetupLightingPipeline();
+  void SetupPostfxPipeline();
+  void SetupCullingPipeline();
+  void SetupParticlePipeline();
   void CleanupPipelineAndSwapchain();
   void RecreateSwapChain();
 
@@ -439,10 +479,12 @@ protected:
   void ClearGBuffer();
   void ClearPostFx();
   void ClearShadowmaps();
+  void ClearTransparent();
 
   void CreateGBuffer();
   void CreatePostFx();
   void CreateShadowmaps();
+  void CreateTransparent();
 
   // for shadowmap resource
   // TODO: refactor

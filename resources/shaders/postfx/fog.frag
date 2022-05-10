@@ -89,5 +89,5 @@ void main()
         wCurrent += wDir*stepLen;
     }
 
-    out_fragColor = vec4(color, translucency);
+    out_fragColor = vec4(color, 1 - translucency);
 }

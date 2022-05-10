@@ -13,7 +13,7 @@ if __name__ == '__main__':
     glslang_cmd = "glslangValidator"
     forceRecompile = "-f" in sys.argv
 
-    shader_list = fromDir('geometry') + fromDir('lighting') + fromDir('postfx')\
+    shader_list = fromDir('geometry') + fromDir('lighting') + fromDir('postfx') + fromDir('forward')\
         + ["culling.comp", "landscape_culling.comp", "quad3_vert.vert"]
     
     for shader in shader_list:

@@ -199,6 +199,7 @@ void SimpleRender::InitPresentation(VkSurfaceKHR &a_surface)
   CreateGBuffer();
   CreatePostFx();
   CreateShadowmaps();
+  CreateTransparent();
 
   m_pGUIRender = std::make_unique<ImGuiRender>(m_instance, m_device, m_physicalDevice, m_queueFamilyIDXs.graphics, m_graphicsQueue, m_swapchain);
 }
@@ -748,6 +749,8 @@ void SimpleRender::SetupPostfxPipeline()
       m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     bindings.BindImage(3, m_ssaoImage.view,
       m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    bindings.BindImage(4, m_transparent.view,
+      m_landscapeHeightmapSampler, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     bindings.BindEnd(&m_postFxDescriptorSet, &m_postFxDescriptorSetLayout);
 
     
@@ -794,6 +797,11 @@ void SimpleRender::SetupPostfxPipeline()
       },
       VkDescriptorImageInfo {
         .sampler = m_landscapeHeightmapSampler,
+        .imageView = m_transparent.view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkDescriptorImageInfo {
+        .sampler = m_landscapeHeightmapSampler,
         .imageView = m_gbuffer.depth_stencil_layer.image.view,
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       },
@@ -836,24 +844,16 @@ void SimpleRender::SetupPostfxPipeline()
       },
       VkWriteDescriptorSet{
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_postFxDescriptorSet,
+        .dstBinding = 4,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[3],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .dstSet = m_fogDescriptorSet,
         .dstBinding = 1,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &image_infos[3],
-      },
-      VkWriteDescriptorSet{
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = m_ssaoDescriptorSet,
-        .dstBinding = 1,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &image_infos[3],
-      },
-      VkWriteDescriptorSet{
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = m_ssaoDescriptorSet,
-        .dstBinding = 2,
         .descriptorCount = 1,
         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
         .pImageInfo = &image_infos[4],
@@ -861,10 +861,26 @@ void SimpleRender::SetupPostfxPipeline()
       VkWriteDescriptorSet{
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .dstSet = m_ssaoDescriptorSet,
-        .dstBinding = 3,
+        .dstBinding = 1,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[4],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_ssaoDescriptorSet,
+        .dstBinding = 2,
         .descriptorCount = 1,
         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
         .pImageInfo = &image_infos[5],
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = m_ssaoDescriptorSet,
+        .dstBinding = 3,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image_infos[6],
       },
     };
 
@@ -1017,19 +1033,93 @@ void SimpleRender::SetupCullingPipeline()
   m_landscapeCullingPipeline.pipeline = maker.MakePipeline(m_device);
 }
 
+void SimpleRender::SetupParticlePipeline()
+{
+  auto& bindings = GetDescMaker();
+  
+  bindings.BindBegin(VK_SHADER_STAGE_COMPUTE_BIT);
+  bindings.BindBuffer(0, m_particles);
+  bindings.BindBuffer(1, m_particlesUbo, nullptr, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  bindings.BindEnd(&m_particlesComputeDescriptorSet, &m_particlesComputeDescriptorSetLayout);
+
+  bindings.BindBegin(VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT);
+  bindings.BindBuffer(0, m_ubo, VK_NULL_HANDLE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  bindings.BindEnd(&m_particlesDescriptorSet, &m_particlesDescriptorSetLayout);
+
+  {
+    vk_utils::ComputePipelineMaker maker;
+    maker.LoadShader(m_device, std::string{PARTICLE_COMP_SHADER_PATH} + ".spv");
+
+    m_particlesComputePipeline.layout = maker.MakeLayout(m_device,
+      {m_particlesComputeDescriptorSetLayout}, 0);
+    m_particlesComputePipeline.pipeline = maker.MakePipeline(m_device);
+  }
+
+  {
+    vk_utils::GraphicsPipelineMaker maker;
+    maker.LoadShaders(m_device, {
+        {VK_SHADER_STAGE_VERTEX_BIT, std::string{PARTICLE_VERT_SHADER_PATH} + ".spv"},
+        {VK_SHADER_STAGE_FRAGMENT_BIT, std::string{PARTICLE_FRAG_SHADER_PATH} + ".spv"},
+      });
+    
+    maker.SetDefaultState(m_width, m_height);
+
+    maker.depthStencilTest.depthWriteEnable = false;
+
+    maker.colorBlendAttachments[0] =
+      VkPipelineColorBlendAttachmentState{
+        .blendEnable = true,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask =
+          VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+            | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+      };
+
+    std::array vertexBindings{
+      VkVertexInputBindingDescription{0, PARTICLE_DATA_SIZE, VK_VERTEX_INPUT_RATE_VERTEX},
+    };
+
+    std::array vertexAttributes{
+      VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
+    };
+
+    m_particlesPipeline.layout = maker.MakeLayout(m_device,
+      {m_particlesDescriptorSetLayout}, sizeof(graphicsPushConsts));
+    m_particlesPipeline.pipeline = maker.MakePipeline(m_device,
+      VkPipelineVertexInputStateCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = static_cast<uint32_t>(vertexBindings.size()),
+        .pVertexBindingDescriptions = vertexBindings.data(),
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributes.size()),
+        .pVertexAttributeDescriptions = vertexAttributes.data(),
+      },
+      m_transparentRenderPass,
+      {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR},
+      vk_utils::IA_PList(), 0);
+  }
+}
+
 void SimpleRender::CreateUniformBuffer()
 {
   VkMemoryRequirements memReq1;
   VkMemoryRequirements memReq2;
+  VkMemoryRequirements memReq3;
   m_ubo = vk_utils::createBuffer(m_device, sizeof(UniformParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &memReq1);
   m_shadowmapUbo = vk_utils::createBuffer(m_device, sizeof(ShadowmapUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &memReq2);
+  m_particlesUbo = vk_utils::createBuffer(m_device, sizeof(ShadowmapUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &memReq3);
 
-  if (memReq1.memoryTypeBits != memReq2.memoryTypeBits)
+  if (memReq1.memoryTypeBits != memReq2.memoryTypeBits
+    || memReq2.memoryTypeBits != memReq3.memoryTypeBits)
   {
     vk_utils::logWarning("UBOs have different mem reqs!");
   }
 
-  auto offsets = vk_utils::calculateMemOffsets({memReq1, memReq2});
+  auto offsets = vk_utils::calculateMemOffsets({memReq1, memReq2, memReq3});
 
   VkMemoryAllocateInfo allocateInfo{
     .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -1043,12 +1133,14 @@ void SimpleRender::CreateUniformBuffer()
 
   VK_CHECK_RESULT(vkBindBufferMemory(m_device, m_ubo, m_uboAlloc, offsets[0]))
   VK_CHECK_RESULT(vkBindBufferMemory(m_device, m_shadowmapUbo, m_uboAlloc, offsets[1]))
+  VK_CHECK_RESULT(vkBindBufferMemory(m_device, m_particlesUbo, m_uboAlloc, offsets[2]))
 
   void* mappedMem;
   vkMapMemory(m_device, m_uboAlloc, 0, offsets.back(), 0, &mappedMem);
 
   m_uboMappedMem = static_cast<std::byte*>(mappedMem) + offsets[0];
   m_shadowmapUboMappedMem = static_cast<std::byte*>(mappedMem) + offsets[1];
+  m_particlesUboMappedMem = static_cast<std::byte*>(mappedMem) + offsets[2];
 
   m_uniforms.baseColor = glm::vec3(0.9f, 0.92f, 1.0f);
   m_uniforms.animateLightColor = false;
@@ -1064,9 +1156,14 @@ void SimpleRender::CreateUniformBuffer()
   m_rsmKernel = vk_utils::createBuffer(m_device,
       RSM_KERNEL_SIZE_BYTES,
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  m_particles = vk_utils::createBuffer(m_device,
+    PARTICLE_DATA_SIZE * MAX_PARTICLES,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
   allBuffers.emplace_back(m_ssaoKernel);
   allBuffers.emplace_back(m_rsmKernel);
+  allBuffers.emplace_back(m_particles);
 
   for (auto* visInfo : m_visibilityInfos)
   {
@@ -1129,11 +1226,15 @@ void SimpleRender::CreateUniformBuffer()
 
     m_pScnMgr->GetCopyHelper()->UpdateBuffer(m_rsmKernel, 0, rsmKernel.data(), rsmKernel.size()*sizeof(rsmKernel[0]));
   }
+
+  {
+    std::array<std::array<float, 8>, MAX_PARTICLES> zeros{{0}};
+    m_pScnMgr->GetCopyHelper()->UpdateBuffer(m_particles, 0, zeros.data(), zeros.size()*sizeof(zeros[0]));
+  }
 }
 
 void SimpleRender::UpdateUniformBuffer(float a_time)
 {
-// most uniforms are updated in GUI -> SetupGUIElements()
   m_uniforms.time = a_time;
   m_uniforms.screenWidth = static_cast<float>(m_width);
   m_uniforms.screenHeight = static_cast<float>(m_height);
@@ -1144,6 +1245,13 @@ void SimpleRender::UpdateUniformBuffer(float a_time)
   m_uniforms.enableSss = m_sss;
   std::memcpy(m_uboMappedMem, &m_uniforms, sizeof(m_uniforms));
   std::memcpy(m_shadowmapUboMappedMem, &m_shadowmapUboData, sizeof(m_shadowmapUboData));
+
+  // kostyl
+  static float prev_time = 0;
+  m_particlesUboData.deltaTime = a_time - prev_time;
+  m_particlesUboData.particleCount = MAX_PARTICLES;
+  prev_time = a_time;
+  std::memcpy(m_particlesUboMappedMem, &m_particlesUboData, sizeof(m_particlesUboData));
 }
 
 void SimpleRender::RecordStaticMeshCulling(VkCommandBuffer a_cmdBuff, VisibilityInfo& visInfo)
@@ -1386,6 +1494,70 @@ void SimpleRender::RecordGrassRendering(VkCommandBuffer a_cmdBuff, VisibilityInf
   cmdEndRegion(a_cmdBuff);
 }
 
+void SimpleRender::RecordTransparentPass(VkCommandBuffer a_cmdBuff)
+{
+  cmdBeginRegion(a_cmdBuff, "Transparent");
+
+  vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, m_particlesComputePipeline.pipeline);
+  vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, m_particlesComputePipeline.layout,
+    0, 1, &m_particlesComputeDescriptorSet, 0, nullptr);
+  vkCmdDispatch(a_cmdBuff, (MAX_PARTICLES + 255) / 256, 1, 1);
+
+  {
+    std::array buffBarriers{
+      VkBufferMemoryBarrier{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+        .buffer = m_particles,
+        .offset = 0,
+        .size = VK_WHOLE_SIZE,
+      },
+    };
+
+    vkCmdPipelineBarrier(a_cmdBuff, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+      VK_DEPENDENCY_BY_REGION_BIT,
+      0, nullptr,
+      static_cast<uint32_t>(buffBarriers.size()), buffBarriers.data(),
+      0, nullptr);
+  }
+
+  std::array clearValues {
+    VkClearValue {
+      .color = {{0.0f, 0.0f, 0.0f, 0.0f}}
+    },
+  };
+  VkRenderPassBeginInfo rpInfo{
+    .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+    .renderPass = m_transparentRenderPass,
+    .framebuffer = m_transparentFramebuffer,
+    .renderArea = {
+      .offset = {0, 0},
+      .extent = m_swapchain.GetExtent(),
+    },
+    .clearValueCount = static_cast<uint32_t>(clearValues.size()),
+    .pClearValues = clearValues.data(),
+  };
+
+  vkCmdBeginRenderPass(a_cmdBuff, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+  {
+    vkCmdBindPipeline(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_particlesPipeline.pipeline);
+    vkCmdPushConstants(a_cmdBuff, m_particlesPipeline.layout,
+      VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT,
+        0, sizeof(graphicsPushConsts), &graphicsPushConsts);
+    vkCmdBindDescriptorSets(a_cmdBuff, VK_PIPELINE_BIND_POINT_GRAPHICS, m_particlesPipeline.layout,
+      0, 1, &m_particlesDescriptorSet, 0, nullptr);
+
+    VkDeviceSize zero = 0;
+    vkCmdBindVertexBuffers(a_cmdBuff, 0, 1, &m_particles, &zero);
+
+    vkCmdDraw(a_cmdBuff, MAX_PARTICLES, 1, 0, 0);
+  }
+  vkCmdEndRenderPass(a_cmdBuff);
+
+  cmdEndRegion(a_cmdBuff);
+}
+
 void SimpleRender::RecordLightResolve(VkCommandBuffer a_cmdBuff)
 {
   cmdBeginRegion(a_cmdBuff, "Light resolve");
@@ -1588,16 +1760,19 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
       }
 
       vkCmdNextSubpass(a_cmdBuff, VK_SUBPASS_CONTENTS_INLINE);
-
-      {
-        RecordLightResolve(a_cmdBuff);
-      }
+      
+      RecordLightResolve(a_cmdBuff);
     }
     vkCmdEndRenderPass(a_cmdBuff);
+
     
+    RecordTransparentPass(a_cmdBuff);
+
+    
+    cmdBeginRegion(a_cmdBuff, "PrePostFx");
     std::array prePostFxClearValues {
       VkClearValue {
-        .color = {{0.0f, 0.0f, 0.0f, 1.0f}} // fog
+        .color = {{0.0f, 0.0f, 0.0f, 0.0f}} // fog
       },
     };
     VkRenderPassBeginInfo prePostFxInfo{
@@ -1637,8 +1812,9 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
       }
     }
     vkCmdEndRenderPass(a_cmdBuff);
-
+    cmdEndRegion(a_cmdBuff);
     
+    cmdBeginRegion(a_cmdBuff, "PostFx apply");
     std::array postFxClearValues {
       VkClearValue {
         .color = {{0.0f, 0.0f, 0.0f, 1.0f}}
@@ -1667,6 +1843,7 @@ void SimpleRender::RecordFrameCommandBuffer(VkCommandBuffer a_cmdBuff, uint32_t 
       vkCmdDraw(a_cmdBuff, 3, 1, 0, 0);
     }
     vkCmdEndRenderPass(a_cmdBuff);
+    cmdEndRegion(a_cmdBuff);
   }
 
   VK_CHECK_RESULT(vkEndCommandBuffer(a_cmdBuff))
@@ -1691,6 +1868,7 @@ void SimpleRender::CleanupPipelineAndSwapchain()
   ClearGBuffer();
   ClearPostFx();
   ClearShadowmaps();
+  ClearTransparent();
 
   m_swapchain.Cleanup();
 }
@@ -1709,6 +1887,8 @@ void SimpleRender::RecreateSwapChain()
   ClearPipeline(m_fogPipeline);
   ClearPipeline(m_ssaoPipeline);
   ClearPipeline(m_postFxPipeline);
+  ClearPipeline(m_particlesComputePipeline);
+  ClearPipeline(m_particlesPipeline);
 
   CleanupPipelineAndSwapchain();
   auto oldImagesNum = m_swapchain.GetImageCount();
@@ -1718,10 +1898,12 @@ void SimpleRender::RecreateSwapChain()
   CreateGBuffer();
   CreatePostFx();
   CreateShadowmaps();
+  CreateTransparent();
   SetupStaticMeshPipeline();
   SetupLandscapePipeline();
   SetupLightingPipeline();
   SetupPostfxPipeline();
+  SetupParticlePipeline();
 
   m_frameFences.resize(m_framesInFlight);
   VkFenceCreateInfo fenceInfo = {};
@@ -1803,6 +1985,12 @@ void SimpleRender::Cleanup()
     m_shadowmapUbo = VK_NULL_HANDLE;
   }
 
+  if (m_particlesUbo != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_particlesUbo, nullptr);
+    m_particlesUbo = VK_NULL_HANDLE;
+  }
+
   if (m_ssaoKernel != VK_NULL_HANDLE)
   {
     vkDestroyBuffer(m_device, m_ssaoKernel, nullptr);
@@ -1813,6 +2001,12 @@ void SimpleRender::Cleanup()
   {
     vkDestroyBuffer(m_device, m_rsmKernel, nullptr);
     m_rsmKernel = VK_NULL_HANDLE;
+  }
+
+  if (m_particles != VK_NULL_HANDLE)
+  {
+    vkDestroyBuffer(m_device, m_particles, nullptr);
+    m_particles = VK_NULL_HANDLE;
   }
 
   for (auto* visInfo : m_visibilityInfos)
@@ -1897,6 +2091,7 @@ void SimpleRender::ProcessInput(const AppInput &input)
     SetupLightingPipeline();
     SetupPostfxPipeline();
     SetupCullingPipeline();
+    SetupParticlePipeline();
   }
 
 }
@@ -2038,6 +2233,7 @@ void SimpleRender::LoadScene(const char* path, bool transpose_inst_matrices)
   SetupLightingPipeline();
   SetupPostfxPipeline();
   SetupCullingPipeline();
+  SetupParticlePipeline();
 
   auto loadedCam = m_pScnMgr->GetCamera(0);
   m_cam.fov = loadedCam.fov;
@@ -2101,6 +2297,8 @@ void SimpleRender::ClearAllPipelines()
   ClearPipeline(m_ssaoPipeline);
   ClearPipeline(m_cullingPipeline);
   ClearPipeline(m_landscapeCullingPipeline);
+  ClearPipeline(m_particlesComputePipeline);
+  ClearPipeline(m_particlesPipeline);
 }
 
 void SimpleRender::DrawFrameSimple()
@@ -2430,6 +2628,23 @@ void SimpleRender::ClearShadowmaps()
   vk_utils::deleteImg(m_device, &m_vsm);
 }
 
+void SimpleRender::ClearTransparent()
+{
+  if (m_transparentRenderPass != VK_NULL_HANDLE)
+  {
+    vkDestroyRenderPass(m_device, m_transparentRenderPass, nullptr);
+    m_transparentRenderPass = VK_NULL_HANDLE;
+  }
+  
+  if (m_transparentFramebuffer != VK_NULL_HANDLE)
+  {
+    vkDestroyFramebuffer(m_device, m_transparentFramebuffer, nullptr);
+    m_transparentFramebuffer = VK_NULL_HANDLE;
+  }
+
+  vk_utils::deleteImg(m_device, &m_transparent);
+}
+
 void SimpleRender::CreateGBuffer()
 {
   auto makeLayer = [this](VkFormat format, VkImageUsageFlagBits usage)
@@ -2515,6 +2730,7 @@ void SimpleRender::CreateGBuffer()
     {
       auto& depth = attachmentDescs[layers.size()];
       depth.format = m_gbuffer.depth_stencil_layer.image.format;
+      depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
     // Present image
     {
@@ -3050,5 +3266,98 @@ void SimpleRender::CreateShadowmaps()
       .layers = 1,
     };
     vkCreateFramebuffer(m_device, &fbufInfo, nullptr, &m_vsmFramebuffers[i]);
+  }
+}
+
+void SimpleRender::CreateTransparent()
+{
+  auto transparentFormat = VK_FORMAT_R16G16B16A16_UNORM;
+  m_transparent.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  vk_utils::createImgAllocAndBind(m_device, m_physicalDevice, m_width, m_height,
+    transparentFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, &m_transparent);
+
+  {
+    std::array attachmentDescs{
+      VkAttachmentDescription{
+        .format = transparentFormat,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+      VkAttachmentDescription{
+        .format = m_gbuffer.depth_stencil_layer.image.format,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+        // should actually be VK_ATTACHMENT_STORE_OP_NONE_EXT
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      },
+    };
+
+    std::array colorRefs{
+      VkAttachmentReference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}
+    };
+
+    VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+    std::array subpasses {
+      VkSubpassDescription {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = static_cast<uint32_t>(colorRefs.size()),
+        .pColorAttachments = colorRefs.data(),
+        .pDepthStencilAttachment = &depthRef,
+      },
+    };
+    
+    std::array dependencies {
+      VkSubpassDependency {
+        .srcSubpass = 0,
+        .dstSubpass = VK_SUBPASS_EXTERNAL,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+      },
+    };
+
+    VkRenderPassCreateInfo renderPassInfo {
+      .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+      .attachmentCount = static_cast<uint32_t>(attachmentDescs.size()),
+      .pAttachments = attachmentDescs.data(),
+      .subpassCount = static_cast<uint32_t>(subpasses.size()),
+      .pSubpasses = subpasses.data(),
+      .dependencyCount = static_cast<uint32_t>(dependencies.size()),
+      .pDependencies = dependencies.data(),
+    };
+
+    VK_CHECK_RESULT(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_transparentRenderPass))
+
+    setObjectName(m_transparentRenderPass, VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT, "Transparent RP");
+  }
+
+  {
+    std::array views{
+      m_transparent.view,
+      m_gbuffer.depth_stencil_layer.image.view,
+    };
+
+    VkFramebufferCreateInfo fbufInfo{
+      .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+      .renderPass = m_transparentRenderPass,
+      .attachmentCount = static_cast<uint32_t>(views.size()),
+      .pAttachments = views.data(),
+      .width = m_width,
+      .height = m_height,
+      .layers = 1,
+    };
+    vkCreateFramebuffer(m_device, &fbufInfo, nullptr, &m_transparentFramebuffer);
   }
 }

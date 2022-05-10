@@ -21,6 +21,7 @@ layout(binding = 0, set = 0) uniform AppData
 layout(binding = 1, set = 0) uniform sampler2D inColor;
 layout(binding = 2, set = 0) uniform sampler2D inFog;
 layout(binding = 3, set = 0) uniform sampler2D inSsao;
+layout(binding = 4, set = 0) uniform sampler2D inTransparent;
 
 // For compat with quad3_vert
 layout (location = 0 ) in FS_IN { vec2 texCoord; } vIn;
@@ -105,7 +106,10 @@ void main()
       color *= occlusion;
     }
 
-    color = fog.a*color + fog.rgb;
+    const vec4 trans = textureLod(inTransparent, fragPos, 0);
+
+    // weighted blending
+    color = (1 - (fog.a + trans.a))*color + (fog.rgb + trans.rgb);
 
     switch (Params.tonemappingMode)
     {
